@@ -331,7 +331,7 @@
                 <textarea id="f_fuente_descripcion" class="inp" rows="2"></textarea>
               </div>
               <div class="md:col-span-2">
-                <label class="lbl" for="f_fuente_url">fuente_url</label>
+                <label class="lbl" for="f_fuente_url">fuenteurl</label>
                 <input id="f_fuente_url" class="inp" type="url" placeholder="https://…" />
                 <p id="err_fuente_url" class="err hidden"></p>
               </div>
@@ -552,7 +552,7 @@
       "tipo_pep",
       "persona_id_relacionado",
       "fuente_descripcion",
-      "fuente_url",
+      "fuenteurl",
       "fecha_captura",
       "fecha_actualizacion",
       "capturado_por",
@@ -1337,7 +1337,7 @@
       if (p.persona_id_relacionado) $("f_persona_id_relacionado").value = p.persona_id_relacionado;
 
       $("f_fuente_descripcion").value = p.fuente_descripcion || "";
-      $("f_fuente_url").value = p.fuente_url || "";
+      $("f_fuente_url").value = p.fuenteurl || "";
       $("f_fecha_captura").value = excelSerialToInputDate(p.fecha_captura) || hoyISO();
       $("f_capturado_por").value = p.capturado_por || "";
       $("f_notas").value = p.notas || "";
@@ -1457,7 +1457,7 @@
         tipo_pep: $("f_tipo_pep").value,
         persona_id_relacionado: $("wrap_relacionado").classList.contains("hidden") ? "" : $("f_persona_id_relacionado").value,
         fuente_descripcion: $("f_fuente_descripcion").value.trim(),
-        fuente_url: $("f_fuente_url").value.trim(),
+        fuenteurl: $("f_fuente_url").value.trim(),
         fecha_captura: $("f_fecha_captura").value || hoyISO(),
         fecha_actualizacion: hoyISO(),
         capturado_por: $("f_capturado_por").value,
@@ -1476,7 +1476,7 @@
       if (!p.tipo_pep) errors.tipo_pep = "Requerido.";
       if (p.curp && p.curp.length !== 18) errors.curp = "Si se captura, debe tener exactamente 18 caracteres.";
       if (p.rfc && p.rfc.length !== 12 && p.rfc.length !== 13) errors.rfc = "Si se captura, debe tener 12 o 13 caracteres.";
-      if (p.fuente_url) { try { new URL(p.fuente_url); } catch (_) { errors.fuente_url = "URL no válida."; } }
+      if (p.fuenteurl) { try { new URL(p.fuenteurl); } catch (_) { errors.fuente_url = "URL no válida."; } }
       if (esDepGenerica(p.dependencia_efectiva_id) && !p.entidad_federativa)
         errors.entidad_federativa = "Requerido para esta dependencia genérica.";
       if (p.dependencia_efectiva_id === DEP_AYUNTAMIENTO && !p.municipio)
