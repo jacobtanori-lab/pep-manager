@@ -97,6 +97,21 @@
     <!-- ============================================================= -->
     <section id="viewApp" class="hidden">
 
+      <!-- ===================== NAVEGACIÓN PRINCIPAL (sin router) ===================== -->
+      <nav class="flex items-center gap-2 mb-5">
+        <button type="button" id="tabPersonas"
+          class="text-sm font-medium px-4 py-2 rounded-lg transition">
+          Personas
+        </button>
+        <button type="button" id="tabCatalogos"
+          class="text-sm font-medium px-4 py-2 rounded-lg transition">
+          Catálogos
+        </button>
+      </nav>
+
+      <!-- ===================== SECCIÓN PERSONAS ===================== -->
+      <div id="seccionPersonas">
+
       <!-- ===================== VISTA LISTA ===================== -->
       <div id="vistaLista">
       <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
@@ -351,6 +366,93 @@
           </div>
         </form>
       </div><!-- /vistaDetalle -->
+      </div><!-- /seccionPersonas -->
+
+      <!-- ===================== SECCIÓN CATÁLOGOS ===================== -->
+      <div id="seccionCatalogos" class="hidden">
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+
+          <div class="px-5 py-4 border-b border-slate-200">
+            <h2 class="text-lg font-semibold text-slate-900">Catálogos PEP (Anexo 1 SHCP)</h2>
+            <p class="text-xs text-slate-500">Consulta de referencia · solo lectura</p>
+          </div>
+
+          <!-- Sub-pestañas: Dependencias / Cargos -->
+          <div class="px-5 pt-4 flex items-center gap-2">
+            <button type="button" id="subtabDependencias"
+              class="text-sm font-medium px-3 py-2 rounded-lg transition">
+              Dependencias <span id="countDependencias" class="text-xs text-slate-400"></span>
+            </button>
+            <button type="button" id="subtabCargos"
+              class="text-sm font-medium px-3 py-2 rounded-lg transition">
+              Cargos <span id="countCargos" class="text-xs text-slate-400"></span>
+            </button>
+          </div>
+
+          <!-- Indicador de carga de catálogos -->
+          <div id="catLoading" class="hidden p-12 flex flex-col items-center justify-center text-slate-500">
+            <svg class="animate-spin w-8 h-8 text-blue-600 mb-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+            </svg>
+            <span class="text-sm">Cargando catálogos desde OneDrive…</span>
+          </div>
+
+          <!-- ===== Tabla: Dependencias ===== -->
+          <div id="panelDependencias" class="hidden">
+            <div class="px-5 py-3 border-b border-slate-100">
+              <input id="searchDependencias" type="text" placeholder="Buscar por ID, nombre o tipo…"
+                class="w-full sm:w-80 text-sm px-3 py-2 rounded-lg border border-slate-300
+                       focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
+            </div>
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead>
+                  <tr class="bg-slate-100 text-left text-slate-700">
+                    <th class="px-4 py-3 font-semibold whitespace-nowrap">dependencia_id</th>
+                    <th class="px-4 py-3 font-semibold whitespace-nowrap">nombre</th>
+                    <th class="px-4 py-3 font-semibold whitespace-nowrap">nombre_corto</th>
+                    <th class="px-4 py-3 font-semibold whitespace-nowrap">ámbito</th>
+                    <th class="px-4 py-3 font-semibold whitespace-nowrap">poder</th>
+                    <th class="px-4 py-3 font-semibold whitespace-nowrap">tipo</th>
+                    <th class="px-4 py-3 font-semibold whitespace-nowrap">secretaría padre</th>
+                  </tr>
+                </thead>
+                <tbody id="tbodyDependencias" class="divide-y divide-slate-100"></tbody>
+              </table>
+            </div>
+            <div id="rowCountDependencias" class="px-5 py-3 text-xs text-slate-400 border-t border-slate-100"></div>
+          </div>
+
+          <!-- ===== Tabla: Cargos ===== -->
+          <div id="panelCargos" class="hidden">
+            <div class="px-5 py-3 border-b border-slate-100">
+              <input id="searchCargos" type="text" placeholder="Buscar por ID, cargo o dependencia…"
+                class="w-full sm:w-80 text-sm px-3 py-2 rounded-lg border border-slate-300
+                       focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
+            </div>
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead>
+                  <tr class="bg-slate-100 text-left text-slate-700">
+                    <th class="px-4 py-3 font-semibold whitespace-nowrap">cargo_id</th>
+                    <th class="px-4 py-3 font-semibold whitespace-nowrap">cargo</th>
+                    <th class="px-4 py-3 font-semibold whitespace-nowrap">sección</th>
+                    <th class="px-4 py-3 font-semibold whitespace-nowrap">ámbito</th>
+                    <th class="px-4 py-3 font-semibold whitespace-nowrap">poder</th>
+                    <th class="px-4 py-3 font-semibold whitespace-nowrap">dependencia</th>
+                    <th class="px-4 py-3 font-semibold whitespace-nowrap">3 niveles</th>
+                    <th class="px-4 py-3 font-semibold whitespace-nowrap">referencia</th>
+                  </tr>
+                </thead>
+                <tbody id="tbodyCargos" class="divide-y divide-slate-100"></tbody>
+              </table>
+            </div>
+            <div id="rowCountCargos" class="px-5 py-3 text-xs text-slate-400 border-t border-slate-100"></div>
+          </div>
+
+        </div>
+      </div><!-- /seccionCatalogos -->
     </section>
 
   </main>
@@ -515,7 +617,13 @@
     let ultimaCarga = null; // timestamp (ms) de la última carga exitosa
 
     // Estado global de navegación (sin router; mostramos/ocultamos divs).
-    let estadoApp = { vistaActual: "lista", personaEditando: null, dirty: false };
+    let estadoApp = {
+      seccionActual: "personas",   // "personas" | "catalogos"
+      vistaActual: "lista",        // dentro de "personas": "lista" | "detalle"
+      catalogoTab: "dependencias", // dentro de "catalogos": "dependencias" | "cargos"
+      personaEditando: null,
+      dirty: false,
+    };
 
     // Catálogos cargados desde Excel (arrays de objetos por nombre de columna).
     let catCargos = [];
@@ -613,6 +721,18 @@
       }
     });
 
+    // Pestañas principales: Personas / Catálogos.
+    $("tabPersonas").addEventListener("click", () => mostrarSeccion("personas"));
+    $("tabCatalogos").addEventListener("click", () => mostrarSeccion("catalogos"));
+
+    // Sub-pestañas dentro de Catálogos: Dependencias / Cargos.
+    $("subtabDependencias").addEventListener("click", () => mostrarCatalogoTab("dependencias"));
+    $("subtabCargos").addEventListener("click", () => mostrarCatalogoTab("cargos"));
+
+    // Búsqueda en vivo dentro de cada tabla de catálogo.
+    $("searchDependencias").addEventListener("input", (e) => renderCatalogoDependencias(e.target.value));
+    $("searchCargos").addEventListener("input", (e) => renderCatalogoCargos(e.target.value));
+
     // -------------------------------------------------------------
     // Cambios de vista
     // -------------------------------------------------------------
@@ -633,6 +753,48 @@
       estadoApp.dirty = false;
       estadoApp.personaEditando = null;
       mostrarVista("lista");
+      mostrarSeccion("personas");
+    }
+
+    // -------------------------------------------------------------
+    // Navegación principal: Personas / Catálogos (sin router)
+    // -------------------------------------------------------------
+    function mostrarSeccion(nombre) {
+      estadoApp.seccionActual = nombre;
+      $("seccionPersonas").classList.toggle("hidden", nombre !== "personas");
+      $("seccionCatalogos").classList.toggle("hidden", nombre !== "catalogos");
+
+      estilizarTab($("tabPersonas"), nombre === "personas");
+      estilizarTab($("tabCatalogos"), nombre === "catalogos");
+
+      if (nombre === "catalogos") {
+        if (catCargos.length === 0 || catDeps.length === 0) {
+          cargarCatalogosStandalone();
+        } else {
+          mostrarCatalogoTab(estadoApp.catalogoTab);
+        }
+      }
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    function estilizarTab(btn, activo) {
+      btn.className = "text-sm font-medium px-4 py-2 rounded-lg transition " +
+        (activo ? "bg-blue-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100");
+    }
+
+    function mostrarCatalogoTab(nombre) {
+      estadoApp.catalogoTab = nombre;
+      $("panelDependencias").classList.toggle("hidden", nombre !== "dependencias");
+      $("panelCargos").classList.toggle("hidden", nombre !== "cargos");
+      estilizarSubtab($("subtabDependencias"), nombre === "dependencias");
+      estilizarSubtab($("subtabCargos"), nombre === "cargos");
+      if (nombre === "dependencias") renderCatalogoDependencias($("searchDependencias").value);
+      else renderCatalogoCargos($("searchCargos").value);
+    }
+
+    function estilizarSubtab(btn, activo) {
+      btn.className = "text-sm font-medium px-3 py-2 rounded-lg transition " +
+        (activo ? "bg-slate-200 text-slate-900" : "text-slate-500 hover:bg-slate-100");
     }
 
     // -------------------------------------------------------------
@@ -885,6 +1047,103 @@
         Object.keys(idx).forEach((name) => { o[name] = v[idx[name]]; });
         return o;
       });
+    }
+
+    // Carga los catálogos de forma independiente (p. ej. si el usuario
+    // entra a la pestaña Catálogos antes de que termine de cargar Personas).
+    async function cargarCatalogosStandalone() {
+      $("catLoading").classList.remove("hidden");
+      $("panelDependencias").classList.add("hidden");
+      $("panelCargos").classList.add("hidden");
+      try {
+        const token = await obtenerToken();
+        const headers = { Authorization: "Bearer " + token };
+        await cargarCatalogos(headers);
+        $("catLoading").classList.add("hidden");
+        mostrarCatalogoTab(estadoApp.catalogoTab);
+      } catch (err) {
+        console.error("Error al cargar catálogos:", err);
+        $("catLoading").classList.add("hidden");
+        mostrarToast("Error al cargar catálogos: " + (err.message || err), "err");
+      }
+    }
+
+    // =============================================================
+    // RENDER DE TABLAS DE CATÁLOGO (solo lectura, con joins en cliente)
+    // =============================================================
+    function renderCatalogoDependencias(filtro) {
+      const q = (filtro || "").trim().toLowerCase();
+      const filas = catDeps.filter((d) => {
+        if (!q) return true;
+        return String(d.dependencia_id || "").toLowerCase().includes(q) ||
+          String(d.nombre || "").toLowerCase().includes(q) ||
+          String(d.nombre_corto || "").toLowerCase().includes(q) ||
+          String(d.tipo || "").toLowerCase().includes(q);
+      });
+
+      const tbody = $("tbodyDependencias");
+      tbody.innerHTML = "";
+      filas.forEach((d) => {
+        const tr = document.createElement("tr");
+        tr.className = "even:bg-slate-50 hover:bg-blue-50/40 transition";
+        const padre = d.secretaria_padre_id ? mapDep[d.secretaria_padre_id] : null;
+        const padreTexto = d.secretaria_padre_id
+          ? (d.secretaria_padre_id + (padre ? " — " + padre.nombre : ""))
+          : "—";
+        [d.dependencia_id, d.nombre, d.nombre_corto, d.ambito, d.poder, d.tipo, padreTexto]
+          .forEach((val) => {
+            const td = document.createElement("td");
+            td.className = "px-4 py-2.5 whitespace-nowrap text-slate-700";
+            td.textContent = (val !== undefined && val !== null && val !== "") ? val : "—";
+            tr.appendChild(td);
+          });
+        tbody.appendChild(tr);
+      });
+
+      $("rowCountDependencias").textContent = filas.length + " dependencia(s)" +
+        (q ? " (filtradas de " + catDeps.length + ")" : "");
+      $("countDependencias").textContent = catDeps.length ? "(" + catDeps.length + ")" : "";
+      $("panelDependencias").classList.remove("hidden");
+    }
+
+    function renderCatalogoCargos(filtro) {
+      const q = (filtro || "").trim().toLowerCase();
+      const filas = catCargos.filter((c) => {
+        if (!q) return true;
+        const dep = mapDep[c.dependencia_id];
+        return String(c.cargo_id || "").toLowerCase().includes(q) ||
+          String(c.cargo || "").toLowerCase().includes(q) ||
+          String(c.dependencia_id || "").toLowerCase().includes(q) ||
+          String(dep ? dep.nombre : "").toLowerCase().includes(q);
+      });
+
+      const tbody = $("tbodyCargos");
+      tbody.innerHTML = "";
+      filas.forEach((c) => {
+        const tr = document.createElement("tr");
+        tr.className = "even:bg-slate-50 hover:bg-blue-50/40 transition";
+
+        const dep = c.dependencia_id ? mapDep[c.dependencia_id] : null;
+        const depTexto = c.dependencia_id
+          ? (c.dependencia_id + " — " + (dep ? dep.nombre : "?"))
+          : "Transversal (todas en ámbito/poder)";
+
+        const celdas = [c.cargo_id, c.cargo, c.seccion, c.ambito, c.poder, depTexto, c.aplica_3_niveles, c.referencia_anexo1];
+        celdas.forEach((val, i) => {
+          const td = document.createElement("td");
+          // La columna "cargo" (i=1) puede ser larga: permitimos wrap.
+          td.className = "px-4 py-2.5 text-slate-700 " + (i === 1 ? "max-w-xs" : "whitespace-nowrap");
+          td.textContent = (val !== undefined && val !== null && val !== "") ? val : "—";
+          if (c.notas && i === 0) td.title = "Notas: " + c.notas;
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+
+      $("rowCountCargos").textContent = filas.length + " cargo(s)" +
+        (q ? " (filtrados de " + catCargos.length + ")" : "");
+      $("countCargos").textContent = catCargos.length ? "(" + catCargos.length + ")" : "";
+      $("panelCargos").classList.remove("hidden");
     }
 
     // =============================================================
