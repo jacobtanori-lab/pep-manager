@@ -91,10 +91,17 @@
             <h2 class="text-lg font-semibold text-slate-900">Personas PEP capturadas</h2>
             <p class="text-xs text-slate-500">Tabla <code class="bg-slate-100 px-1 rounded">tbl_Personas</code> · OneDrive</p>
           </div>
-          <button id="btnReload"
-            class="text-sm font-medium px-3 py-2 rounded-lg border border-slate-300 hover:bg-slate-100 transition shadow-sm">
-            Recargar
-          </button>
+          <div class="flex items-center gap-2">
+            <!-- DIAGNÓSTICO TEMPORAL: listar carpetas de OneDrive -->
+            <button id="btnDiag"
+              class="text-sm font-medium px-3 py-2 rounded-lg border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 transition shadow-sm">
+              🔍 Diagnóstico OneDrive
+            </button>
+            <button id="btnReload"
+              class="text-sm font-medium px-3 py-2 rounded-lg border border-slate-300 hover:bg-slate-100 transition shadow-sm">
+              Recargar
+            </button>
+          </div>
         </div>
 
         <!-- Indicador de carga -->
@@ -132,6 +139,15 @@
         </div>
 
         <div id="rowCount" class="hidden px-5 py-3 text-xs text-slate-400 border-t border-slate-100"></div>
+
+        <!-- DIAGNÓSTICO TEMPORAL: salida del listado de OneDrive -->
+        <div id="diagWrap" class="hidden border-t border-amber-200 bg-amber-50/40 p-5">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="text-sm font-semibold text-amber-800">🔍 Diagnóstico OneDrive (temporal)</h3>
+            <button id="btnDiagClose" class="text-xs text-amber-700 hover:underline">Cerrar</button>
+          </div>
+          <pre id="diagOutput" class="text-xs bg-white border border-amber-200 rounded-lg p-3 overflow-x-auto whitespace-pre text-slate-700"></pre>
+        </div>
       </div>
     </section>
 
@@ -270,6 +286,55 @@
     });
 
     $("btnReload").addEventListener("click", cargarPersonas);
+
+    // -------------------------------------------------------------
+    // DIAGNÓSTICO TEMPORAL: listar carpetas/archivos en OneDrive
+    // (se quitará una vez verificada la ruta /Apps/PEP-Manager)
+    // -------------------------------------------------------------
+    const diagWrap = $("diagWrap");
+    const diagOutput = $("diagOutput");
+
+    $("btnDiagClose").addEventListener("click", () => diagWrap.classList.add("hidden"));
+
+    $("btnDiag").addEventListener("click", async () => {
+      diagWrap.classList.remove("hidden");
+      diagOutput.textContent = "Consultando Microsoft Graph…";
+      try {
+        const token = await obtenerToken();
+        const headers = { Authorization: "Bearer " + token };
+
+        // 1) Contenido de la raíz del OneDrive
+        const rootResp = await fetch(
+          GRAPH_BASE + "/me/drive/root/children?$select=name,folder",
+          { headers }
+        );
+        const rootData = rootResp.ok ? await rootResp.json() : await rootResp.json().catch(() => null);
+
+        // 2) Contenido de la carpeta /Apps (si existe)
+        const appsResp = await fetch(
+          GRAPH_BASE + "/me/drive/root:/Apps:/children",
+          { headers }
+        );
+        const appsData = appsResp.ok ? await appsResp.json() : await appsResp.json().catch(() => null);
+
+        // Resumen legible de nombres en la raíz
+        const nombresRaiz = (rootData && rootData.value)
+          ? rootData.value.map((it) => (it.folder ? "📁 " : "📄 ") + it.name)
+          : ["(sin datos)"];
+
+        const salida =
+          "=== RAÍZ DE ONEDRIVE (" + rootResp.status + ") ===\n" +
+          nombresRaiz.join("\n") + "\n\n" +
+          JSON.stringify(rootData, null, 2) + "\n\n" +
+          "=== CARPETA /Apps (" + appsResp.status + ") ===\n" +
+          JSON.stringify(appsData, null, 2);
+
+        diagOutput.textContent = salida;
+      } catch (err) {
+        console.error("Error de diagnóstico:", err);
+        diagOutput.textContent = "Error: " + (err.message || err);
+      }
+    });
 
     // -------------------------------------------------------------
     // Cambios de vista
