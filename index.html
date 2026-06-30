@@ -10,6 +10,18 @@
 
   <!-- MSAL.js v3 (Browser) por CDN para autenticación con Microsoft -->
   <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@3.27.0/lib/msal-browser.min.js"></script>
+
+  <!-- Estilos del formulario de detalle (CSS plano, reutilizables) -->
+  <style>
+    .lbl { display:block; font-size:0.875rem; font-weight:500; color:#334155; margin-bottom:0.25rem; }
+    .inp { width:100%; border:1px solid #cbd5e1; border-radius:0.5rem; padding:0.5rem 0.75rem; font-size:0.875rem; background:#fff; }
+    .inp:focus { outline:none; box-shadow:0 0 0 2px #3b82f6; border-color:#3b82f6; }
+    .inp:disabled, .inp[readonly] { background:#f1f5f9; color:#64748b; cursor:not-allowed; }
+    .inp-error { border-color:#ef4444 !important; }
+    .err { color:#dc2626; font-size:0.875rem; margin-top:0.25rem; }
+    .sec { border:1px solid #e2e8f0; border-radius:0.75rem; padding:1.25rem; }
+    .sec-title { font-size:0.75rem; font-weight:700; color:#0f172a; margin-bottom:1rem; text-transform:uppercase; letter-spacing:0.04em; }
+  </style>
 </head>
 
 <body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col">
@@ -84,6 +96,9 @@
     <!-- VISTA 2: APP (con sesión) — tabla de personas                 -->
     <!-- ============================================================= -->
     <section id="viewApp" class="hidden">
+
+      <!-- ===================== VISTA LISTA ===================== -->
+      <div id="vistaLista">
       <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
 
         <div class="px-5 py-4 border-b border-slate-200 flex items-center justify-between gap-3 flex-wrap">
@@ -94,10 +109,21 @@
               <span id="lastUpdated" class="ml-1 text-slate-400"></span>
             </p>
           </div>
-          <button id="btnReload"
-            class="text-sm font-medium px-3 py-2 rounded-lg border border-slate-300 hover:bg-slate-100 transition shadow-sm">
-            Recargar
-          </button>
+          <div class="flex items-center gap-3 flex-wrap">
+            <!-- Toggle para mostrar/ocultar personas con tipo_pep = Eliminado -->
+            <label class="flex items-center gap-2 text-xs text-slate-600 select-none cursor-pointer">
+              <input id="toggleEliminados" type="checkbox" class="rounded border-slate-300" />
+              Mostrar eliminados
+            </label>
+            <button id="btnNueva"
+              class="text-sm font-medium px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition shadow-sm">
+              + Nueva persona
+            </button>
+            <button id="btnReload"
+              class="text-sm font-medium px-3 py-2 rounded-lg border border-slate-300 hover:bg-slate-100 transition shadow-sm">
+              Recargar
+            </button>
+          </div>
         </div>
 
         <!-- Indicador de carga -->
@@ -137,7 +163,7 @@
                   <th class="px-4 py-3 font-semibold whitespace-nowrap">fecha_inicio_cargo</th>
                   <th class="px-4 py-3 font-semibold whitespace-nowrap">fecha_fin_proyectada</th>
                   <th class="px-4 py-3 font-semibold whitespace-nowrap">estatus</th>
-                  <th class="px-4 py-3 font-semibold whitespace-nowrap text-center">ver</th>
+                  <th class="px-4 py-3 font-semibold whitespace-nowrap text-center">acciones</th>
                 </tr>
               </thead>
               <tbody id="tableBody" class="divide-y divide-slate-100"></tbody>
@@ -147,9 +173,201 @@
 
         <div id="rowCount" class="hidden px-5 py-3 text-xs text-slate-400 border-t border-slate-100"></div>
       </div>
+      </div><!-- /vistaLista -->
+
+      <!-- ===================== VISTA DETALLE ===================== -->
+      <div id="vistaDetalle" class="hidden">
+        <form id="formPersona" autocomplete="off" class="space-y-6 pb-24">
+
+          <!-- Encabezado de la vista detalle -->
+          <div class="flex items-center justify-between gap-3 flex-wrap">
+            <button type="button" id="btnVolver"
+              class="text-sm font-medium px-3 py-2 rounded-lg border border-slate-300 hover:bg-slate-100 transition shadow-sm">
+              ← Volver a la lista
+            </button>
+            <span id="dirtyIndicator" class="text-xs text-slate-400">Sin cambios</span>
+          </div>
+          <h2 id="detalleTitulo" class="text-xl font-bold text-slate-900">Nueva persona PEP</h2>
+
+          <!-- Sección 1 — Identificación -->
+          <div class="sec bg-white">
+            <h3 class="sec-title">1 · Identificación</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="lbl" for="f_persona_id">persona_id</label>
+                <input id="f_persona_id" class="inp" readonly />
+              </div>
+              <div>
+                <label class="lbl" for="f_nombre_completo">nombre_completo <span class="text-red-500">*</span></label>
+                <input id="f_nombre_completo" class="inp" type="text" />
+                <p id="err_nombre_completo" class="err hidden"></p>
+              </div>
+              <div>
+                <label class="lbl" for="f_nombre_normalizado">nombre_normalizado <span class="text-slate-400">(calculado)</span></label>
+                <input id="f_nombre_normalizado" class="inp" disabled placeholder="Excel lo recalcula" />
+              </div>
+              <div>
+                <label class="lbl" for="f_fecha_nacimiento">fecha_nacimiento</label>
+                <input id="f_fecha_nacimiento" class="inp" type="date" />
+              </div>
+              <div>
+                <label class="lbl" for="f_curp">curp</label>
+                <input id="f_curp" class="inp uppercase" type="text" maxlength="18" />
+                <p id="err_curp" class="err hidden"></p>
+              </div>
+              <div>
+                <label class="lbl" for="f_rfc">rfc</label>
+                <input id="f_rfc" class="inp uppercase" type="text" maxlength="13" />
+                <p id="err_rfc" class="err hidden"></p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Sección 2 — Cargo y Dependencia -->
+          <div class="sec bg-white">
+            <h3 class="sec-title">2 · Cargo y Dependencia</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div class="md:col-span-2">
+                <label class="lbl" for="f_cargo_id">cargo_id <span class="text-red-500">*</span></label>
+                <select id="f_cargo_id" class="inp"></select>
+                <p id="err_cargo_id" class="err hidden"></p>
+                <!-- Caja de info del cargo seleccionado -->
+                <div id="cargoInfo" class="hidden mt-3 text-xs rounded-lg bg-blue-50 border border-blue-200 text-blue-900 p-3 space-y-1">
+                  <div><span class="font-semibold">Referencia Anexo 1:</span> <span id="info_referencia">—</span></div>
+                  <div><span class="font-semibold">Aplica regla 3 niveles:</span> <span id="info_3niveles">—</span></div>
+                  <div><span class="font-semibold">Notas:</span> <span id="info_notas">—</span></div>
+                </div>
+              </div>
+              <div class="md:col-span-2">
+                <label class="lbl" for="f_dependencia_efectiva_id">dependencia_efectiva_id <span class="text-red-500">*</span></label>
+                <select id="f_dependencia_efectiva_id" class="inp"></select>
+                <p id="err_dependencia_efectiva_id" class="err hidden"></p>
+              </div>
+              <div id="wrap_entidad" class="hidden">
+                <label class="lbl" for="f_entidad_federativa">entidad_federativa <span class="text-red-500">*</span></label>
+                <select id="f_entidad_federativa" class="inp"></select>
+                <p id="err_entidad_federativa" class="err hidden"></p>
+              </div>
+              <div id="wrap_municipio" class="hidden">
+                <label class="lbl" for="f_municipio">municipio <span class="text-red-500">*</span></label>
+                <input id="f_municipio" class="inp" type="text" />
+                <p id="err_municipio" class="err hidden"></p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Sección 3 — Fechas del cargo -->
+          <div class="sec bg-white">
+            <h3 class="sec-title">3 · Fechas del cargo</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="lbl" for="f_fecha_inicio_cargo">fecha_inicio_cargo <span class="text-red-500">*</span></label>
+                <input id="f_fecha_inicio_cargo" class="inp" type="date" />
+                <p id="err_fecha_inicio_cargo" class="err hidden"></p>
+              </div>
+              <div>
+                <label class="lbl" for="f_fecha_fin_proyectada">fecha_fin_proyectada</label>
+                <input id="f_fecha_fin_proyectada" class="inp" type="date" />
+              </div>
+              <div>
+                <label class="lbl" for="f_fecha_fin_remanencia">fecha_fin_remanencia <span class="text-slate-400">(calculado)</span></label>
+                <input id="f_fecha_fin_remanencia" class="inp" disabled placeholder="Excel la recalcula" />
+              </div>
+              <div>
+                <label class="lbl" for="f_estatus">estatus <span class="text-slate-400">(calculado)</span></label>
+                <input id="f_estatus" class="inp" disabled placeholder="Excel lo recalcula" />
+              </div>
+            </div>
+          </div>
+
+          <!-- Sección 4 — Clasificación y relaciones -->
+          <div class="sec bg-white">
+            <h3 class="sec-title">4 · Clasificación y relaciones</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="lbl" for="f_tipo_pep">tipo_pep <span class="text-red-500">*</span></label>
+                <select id="f_tipo_pep" class="inp">
+                  <option value="Principal">Principal</option>
+                  <option value="Familiar">Familiar</option>
+                  <option value="Asociado">Asociado</option>
+                  <option value="Eliminado">Eliminado</option>
+                </select>
+                <p id="err_tipo_pep" class="err hidden"></p>
+              </div>
+              <div id="wrap_relacionado" class="hidden">
+                <label class="lbl" for="f_persona_id_relacionado">persona_id_relacionado</label>
+                <select id="f_persona_id_relacionado" class="inp"></select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Sección 5 — Fuente y auditoría -->
+          <div class="sec bg-white">
+            <h3 class="sec-title">5 · Fuente y auditoría</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div class="md:col-span-2">
+                <label class="lbl" for="f_fuente_descripcion">fuente_descripcion</label>
+                <textarea id="f_fuente_descripcion" class="inp" rows="2"></textarea>
+              </div>
+              <div class="md:col-span-2">
+                <label class="lbl" for="f_fuente_url">fuente_url</label>
+                <input id="f_fuente_url" class="inp" type="url" placeholder="https://…" />
+                <p id="err_fuente_url" class="err hidden"></p>
+              </div>
+              <div>
+                <label class="lbl" for="f_fecha_captura">fecha_captura <span class="text-slate-400">(auto)</span></label>
+                <input id="f_fecha_captura" class="inp" type="date" readonly />
+              </div>
+              <div>
+                <label class="lbl" for="f_fecha_actualizacion">fecha_actualizacion <span class="text-slate-400">(auto)</span></label>
+                <input id="f_fecha_actualizacion" class="inp" type="date" readonly />
+              </div>
+              <div class="md:col-span-2">
+                <label class="lbl" for="f_capturado_por">capturado_por <span class="text-slate-400">(auto)</span></label>
+                <input id="f_capturado_por" class="inp" readonly />
+              </div>
+              <div class="md:col-span-2">
+                <label class="lbl" for="f_notas">notas</label>
+                <textarea id="f_notas" class="inp" rows="4"></textarea>
+              </div>
+            </div>
+          </div>
+
+          <!-- Error general de guardado -->
+          <p id="saveError" class="hidden err"></p>
+
+          <!-- Barra inferior sticky con Cancelar / Guardar -->
+          <div class="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 shadow-lg z-20">
+            <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-end gap-3">
+              <button type="button" id="btnCancelar"
+                class="text-sm font-medium px-4 py-2 rounded-lg border border-slate-300 hover:bg-slate-100 transition">
+                Cancelar
+              </button>
+              <button type="submit" id="btnGuardar"
+                class="text-sm font-medium px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition shadow-sm">
+                Guardar
+              </button>
+            </div>
+          </div>
+        </form>
+      </div><!-- /vistaDetalle -->
     </section>
 
   </main>
+
+  <!-- Toast de notificación (esquina inferior derecha) -->
+  <div id="toast" class="hidden fixed bottom-5 right-5 z-50 px-4 py-3 rounded-lg shadow-lg text-sm font-medium"></div>
+
+  <!-- Overlay con spinner para operaciones de guardado/borrado -->
+  <div id="overlay" class="hidden fixed inset-0 z-40 bg-slate-900/30 flex items-center justify-center">
+    <div class="bg-white rounded-xl px-6 py-5 shadow-xl flex items-center gap-3">
+      <svg class="animate-spin w-6 h-6 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+      </svg>
+      <span id="overlayText" class="text-sm text-slate-700">Guardando…</span>
+    </div>
+  </div>
 
   <footer class="py-6 text-center text-xs text-slate-400">
     PEP Manager · Uso interno de cumplimiento
@@ -200,6 +418,63 @@
     // Columnas que llegan como número serial de Excel y deben formatearse.
     const COLS_FECHA = ["fecha_inicio_cargo", "fecha_fin_proyectada"];
 
+    // Catálogos auxiliares (named tables).
+    const TABLE_CARGOS = "tbl_Cargos";
+    const TABLE_DEPENDENCIAS = "tbl_Dependencias";
+
+    // SINGLE SOURCE OF TRUTH: orden lógico de columnas de tbl_Personas.
+    // (El orden real al escribir se resuelve con el índice devuelto por
+    //  Graph, pero esta lista define qué campos maneja el formulario.)
+    const COLUMNAS_PERSONAS = [
+      "persona_id",
+      "cargo_id",
+      "dependencia_efectiva_id",
+      "entidad_federativa",
+      "municipio",
+      "nombre_completo",
+      "nombre_normalizado",
+      "fecha_nacimiento",
+      "curp",
+      "rfc",
+      "fecha_inicio_cargo",
+      "fecha_fin_proyectada",
+      "fecha_fin_remanencia",
+      "estatus",
+      "tipo_pep",
+      "persona_id_relacionado",
+      "fuente_descripcion",
+      "fuente_url",
+      "fecha_captura",
+      "fecha_actualizacion",
+      "capturado_por",
+      "notas",
+    ];
+
+    // Columnas calculadas por Excel: se envían "" para que recalcule.
+    const COLS_CALCULADAS = ["nombre_normalizado", "fecha_fin_remanencia", "estatus"];
+
+    // Todas las columnas de fecha (para conversión serial <-> YYYY-MM-DD).
+    const COLS_FECHA_ALL = [
+      "fecha_nacimiento", "fecha_inicio_cargo", "fecha_fin_proyectada",
+      "fecha_captura", "fecha_actualizacion",
+    ];
+
+    // Plantillas genéricas (estatales/municipales/partidos): DEP-254 a DEP-262.
+    const DEP_GENERICA_MIN = 254;
+    const DEP_GENERICA_MAX = 262;
+    const DEP_AYUNTAMIENTO = "DEP-261"; // requiere municipio
+
+    // 32 entidades federativas de México.
+    const ESTADOS_MX = [
+      "Aguascalientes", "Baja California", "Baja California Sur", "Campeche",
+      "Chiapas", "Chihuahua", "Ciudad de México", "Coahuila", "Colima",
+      "Durango", "Estado de México", "Guanajuato", "Guerrero", "Hidalgo",
+      "Jalisco", "Michoacán", "Morelos", "Nayarit", "Nuevo León", "Oaxaca",
+      "Puebla", "Querétaro", "Quintana Roo", "San Luis Potosí", "Sinaloa",
+      "Sonora", "Tabasco", "Tamaulipas", "Tlaxcala", "Veracruz", "Yucatán",
+      "Zacatecas",
+    ];
+
     // -------------------------------------------------------------
     // Inicialización de MSAL
     // -------------------------------------------------------------
@@ -238,6 +513,15 @@
     // Estado en memoria de los datos cargados (para filtrar sin re-llamar Graph).
     let datosCargados = { idx: {}, filas: [] };
     let ultimaCarga = null; // timestamp (ms) de la última carga exitosa
+
+    // Estado global de navegación (sin router; mostramos/ocultamos divs).
+    let estadoApp = { vistaActual: "lista", personaEditando: null, dirty: false };
+
+    // Catálogos cargados desde Excel (arrays de objetos por nombre de columna).
+    let catCargos = [];
+    let catDeps = [];
+    let mapCargo = {}; // cargo_id -> objeto cargo
+    let mapDep = {};   // dependencia_id -> objeto dependencia
 
     // -------------------------------------------------------------
     // Arranque: MSAL v3 requiere initialize() antes de usarse.
@@ -298,6 +582,37 @@
     // Filtrado en vivo: re-renderiza la tabla con el texto del buscador.
     searchInput.addEventListener("input", () => renderTabla(searchInput.value));
 
+    // Toggle "Mostrar eliminados": re-renderiza la lista.
+    $("toggleEliminados").addEventListener("change", () => renderTabla(searchInput.value));
+
+    // Abrir formulario en modo "nueva persona".
+    $("btnNueva").addEventListener("click", abrirNueva);
+
+    // Botones del formulario.
+    $("btnVolver").addEventListener("click", () => volverALista(true));
+    $("btnCancelar").addEventListener("click", () => volverALista(true));
+    $("formPersona").addEventListener("submit", (e) => { e.preventDefault(); guardarPersona(); });
+
+    // Marca el formulario como "modificado" ante cualquier cambio del usuario.
+    $("formPersona").addEventListener("input", marcarDirty);
+
+    // Cambios que disparan lógica condicional.
+    $("f_cargo_id").addEventListener("change", onCargoChange);
+    $("f_dependencia_efectiva_id").addEventListener("change", onDepChange);
+    $("f_tipo_pep").addEventListener("change", onTipoPepChange);
+
+    // CURP/RFC a mayúsculas al salir del campo.
+    $("f_curp").addEventListener("blur", (e) => { e.target.value = e.target.value.toUpperCase().trim(); });
+    $("f_rfc").addEventListener("blur", (e) => { e.target.value = e.target.value.toUpperCase().trim(); });
+
+    // Aviso del navegador si hay cambios sin guardar al cerrar/recargar.
+    window.addEventListener("beforeunload", (e) => {
+      if (estadoApp.vistaActual === "detalle" && estadoApp.dirty) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    });
+
     // -------------------------------------------------------------
     // Cambios de vista
     // -------------------------------------------------------------
@@ -314,6 +629,10 @@
       userZone.classList.remove("hidden");
       userZone.classList.add("flex");
       userName.textContent = cuenta.name || cuenta.username || "Sesión iniciada";
+      // Siempre arrancamos en la lista (no en un formulario a medias).
+      estadoApp.dirty = false;
+      estadoApp.personaEditando = null;
+      mostrarVista("lista");
     }
 
     // -------------------------------------------------------------
@@ -378,6 +697,11 @@
         ultimaCarga = Date.now();
         actualizarTimestamp();
 
+        // Cargamos catálogos (cargos/dependencias) la primera vez.
+        if (catCargos.length === 0 || catDeps.length === 0) {
+          await cargarCatalogos(headers);
+        }
+
         if (filas.length === 0) {
           emptyState.classList.remove("hidden");
           return;
@@ -403,10 +727,14 @@
       const idx = datosCargados.idx;
       const q = (filtro || "").trim().toLowerCase();
 
-      // Filtro case-insensitive contra persona_id y nombre_completo.
+      const mostrarEliminados = $("toggleEliminados").checked;
+
+      // Filtro: oculta eliminados (salvo toggle) y aplica búsqueda.
       const filas = datosCargados.filas.filter((fila) => {
-        if (!q) return true;
         const v = fila.values[0];
+        const tipo = String(v[idx["tipo_pep"]] ?? "");
+        if (!mostrarEliminados && tipo === "Eliminado") return false;
+        if (!q) return true;
         const id = String(v[idx["persona_id"]] ?? "").toLowerCase();
         const nombre = String(v[idx["nombre_completo"]] ?? "").toLowerCase();
         return id.includes(q) || nombre.includes(q);
@@ -442,20 +770,44 @@
           tr.appendChild(td);
         });
 
-        // Columna de acciones: icono "ver detalles" (prep. próximo sprint).
+        // Columna de acciones: ver, editar, eliminar.
         const tdAcc = document.createElement("td");
         tdAcc.className = "px-4 py-2.5 whitespace-nowrap text-center";
+        const cont = document.createElement("div");
+        cont.className = "flex items-center justify-center gap-2";
+
+        // 👁️ Ver detalles (por ahora console.log del objeto completo).
         const btnVer = document.createElement("button");
+        btnVer.type = "button";
         btnVer.className = "text-base hover:scale-110 transition";
         btnVer.title = "Ver detalles";
         btnVer.textContent = "👁️";
         btnVer.addEventListener("click", () => {
-          // Construimos el objeto persona completo (todas las columnas).
           const persona = {};
           Object.keys(idx).forEach((col) => { persona[col] = valores[idx[col]]; });
           console.log("Persona:", persona);
         });
-        tdAcc.appendChild(btnVer);
+
+        // ✏️ Editar: abre la vista detalle con los datos cargados.
+        const btnEditar = document.createElement("button");
+        btnEditar.type = "button";
+        btnEditar.className = "text-base hover:scale-110 transition";
+        btnEditar.title = "Editar";
+        btnEditar.textContent = "✏️";
+        btnEditar.addEventListener("click", () => abrirEditar(fila));
+
+        // 🗑️ Eliminar (soft delete con confirmación).
+        const btnEliminar = document.createElement("button");
+        btnEliminar.type = "button";
+        btnEliminar.className = "text-base hover:scale-110 transition";
+        btnEliminar.title = "Marcar como eliminado";
+        btnEliminar.textContent = "🗑️";
+        btnEliminar.addEventListener("click", () => softDelete(fila));
+
+        cont.appendChild(btnVer);
+        cont.appendChild(btnEditar);
+        cont.appendChild(btnEliminar);
+        tdAcc.appendChild(cont);
         tr.appendChild(tdAcc);
 
         tableBody.appendChild(tr);
@@ -503,6 +855,571 @@
 
     // Refrescamos la etiqueta de tiempo cada segundo.
     setInterval(actualizarTimestamp, 1000);
+
+    // =============================================================
+    // CATÁLOGOS (tbl_Cargos, tbl_Dependencias)
+    // =============================================================
+    async function cargarCatalogos(headers) {
+      const base = GRAPH_BASE + "/me/drive/root:" + WORKBOOK_PATH + ":/workbook/tables/";
+      const [cCols, cRows, dCols, dRows] = await Promise.all([
+        fetch(base + TABLE_CARGOS + "/columns", { headers }),
+        fetch(base + TABLE_CARGOS + "/rows", { headers }),
+        fetch(base + TABLE_DEPENDENCIAS + "/columns", { headers }),
+        fetch(base + TABLE_DEPENDENCIAS + "/rows", { headers }),
+      ]);
+      if (cCols.ok && cRows.ok) catCargos = filasAObjetos(await cCols.json(), await cRows.json());
+      if (dCols.ok && dRows.ok) catDeps = filasAObjetos(await dCols.json(), await dRows.json());
+
+      mapCargo = {}; catCargos.forEach((c) => { mapCargo[c.cargo_id] = c; });
+      mapDep = {}; catDeps.forEach((d) => { mapDep[d.dependencia_id] = d; });
+      poblarSelectCargos();
+    }
+
+    // Convierte respuesta columns+rows de Graph en array de objetos.
+    function filasAObjetos(colsData, rowsData) {
+      const idx = {};
+      (colsData.value || []).forEach((c) => { idx[c.name] = c.index; });
+      return (rowsData.value || []).map((r) => {
+        const v = r.values[0];
+        const o = {};
+        Object.keys(idx).forEach((name) => { o[name] = v[idx[name]]; });
+        return o;
+      });
+    }
+
+    // =============================================================
+    // NAVEGACIÓN ENTRE VISTAS
+    // =============================================================
+    function mostrarVista(nombre) {
+      estadoApp.vistaActual = nombre;
+      $("vistaLista").classList.toggle("hidden", nombre !== "lista");
+      $("vistaDetalle").classList.toggle("hidden", nombre !== "detalle");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    function volverALista(confirmar) {
+      if (confirmar && estadoApp.dirty) {
+        if (!confirm("Hay cambios sin guardar. ¿Descartar y volver a la lista?")) return;
+      }
+      estadoApp.dirty = false;
+      estadoApp.personaEditando = null;
+      mostrarVista("lista");
+    }
+
+    // =============================================================
+    // ABRIR FORMULARIO (nueva / editar)
+    // =============================================================
+    function abrirNueva() {
+      estadoApp.personaEditando = null;
+      resetForm();
+      $("detalleTitulo").textContent = "Nueva persona PEP";
+      $("f_persona_id").value = siguientePersonaId();
+      const cuenta = getCuentaActiva();
+      $("f_capturado_por").value = cuenta ? (cuenta.name || cuenta.username || "") : "";
+      $("f_fecha_captura").value = hoyISO();
+      $("f_fecha_actualizacion").value = hoyISO();
+      $("f_tipo_pep").value = "Principal";
+      onTipoPepChange();
+      onCargoChange();
+      mostrarVista("detalle");
+      setDirty(false);
+      setTimeout(() => $("f_nombre_completo").focus(), 50);
+    }
+
+    function abrirEditar(fila) {
+      const idx = datosCargados.idx;
+      const v = fila.values[0];
+      const persona = {};
+      Object.keys(idx).forEach((col) => { persona[col] = v[idx[col]]; });
+
+      estadoApp.personaEditando = { index: fila.index, persona };
+      resetForm();
+      $("detalleTitulo").textContent = "Editar: " + (persona.persona_id || "") +
+        " — " + (persona.nombre_completo || "");
+      llenarFormDesdePersona(persona);
+      $("f_fecha_actualizacion").value = hoyISO(); // se sella al guardar
+      mostrarVista("detalle");
+      setDirty(false);
+      setTimeout(() => $("f_nombre_completo").focus(), 50);
+    }
+
+    // =============================================================
+    // POBLAR Y RESETEAR EL FORMULARIO
+    // =============================================================
+    function resetForm() {
+      $("formPersona").reset();
+      limpiarErrores();
+      $("saveError").classList.add("hidden");
+      poblarSelectCargos();
+      poblarEntidades();
+      $("cargoInfo").classList.add("hidden");
+      $("wrap_entidad").classList.add("hidden");
+      $("wrap_municipio").classList.add("hidden");
+      $("wrap_relacionado").classList.add("hidden");
+      const selDep = $("f_dependencia_efectiva_id");
+      selDep.innerHTML = '<option value="">— Selecciona una dependencia —</option>';
+      selDep.disabled = false;
+      $("f_nombre_normalizado").value = "";
+      $("f_fecha_fin_remanencia").value = "";
+      $("f_estatus").value = "";
+    }
+
+    function poblarSelectCargos() {
+      const sel = $("f_cargo_id");
+      const actual = sel.value;
+      sel.innerHTML = '<option value="">— Selecciona un cargo —</option>';
+      catCargos.forEach((c) => {
+        const opt = document.createElement("option");
+        opt.value = c.cargo_id;
+        opt.textContent = c.cargo_id + " — " + (c.cargo || "");
+        sel.appendChild(opt);
+      });
+      if (actual) sel.value = actual;
+    }
+
+    function poblarEntidades(seleccion) {
+      const sel = $("f_entidad_federativa");
+      sel.innerHTML = '<option value="">— Selecciona estado —</option>';
+      ESTADOS_MX.forEach((e) => {
+        const opt = document.createElement("option");
+        opt.value = e; opt.textContent = e;
+        sel.appendChild(opt);
+      });
+      if (seleccion) sel.value = seleccion;
+    }
+
+    function poblarRelacionados(seleccion) {
+      const sel = $("f_persona_id_relacionado");
+      const idx = datosCargados.idx;
+      sel.innerHTML = '<option value="">— Ninguna —</option>';
+      datosCargados.filas.forEach((fila) => {
+        const v = fila.values[0];
+        const pid = v[idx["persona_id"]];
+        if (!pid) return;
+        // No permitir relacionarse consigo misma.
+        if (estadoApp.personaEditando && estadoApp.personaEditando.persona.persona_id === pid) return;
+        const opt = document.createElement("option");
+        opt.value = pid;
+        opt.textContent = pid + " — " + (v[idx["nombre_completo"]] || "");
+        sel.appendChild(opt);
+      });
+      if (seleccion) sel.value = seleccion;
+    }
+
+    function llenarFormDesdePersona(p) {
+      $("f_persona_id").value = p.persona_id || "";
+      $("f_nombre_completo").value = p.nombre_completo || "";
+      $("f_nombre_normalizado").value = p.nombre_normalizado || "";
+      $("f_fecha_nacimiento").value = excelSerialToInputDate(p.fecha_nacimiento);
+      $("f_curp").value = p.curp || "";
+      $("f_rfc").value = p.rfc || "";
+
+      // Cargo + dependencia (preseleccionando la dependencia guardada).
+      $("f_cargo_id").value = p.cargo_id || "";
+      onCargoChange(p.dependencia_efectiva_id ? String(p.dependencia_efectiva_id) : null);
+
+      // Entidad / municipio según la dependencia.
+      poblarEntidades(p.entidad_federativa || "");
+      actualizarVisibilidadEntidadMunicipio(String(p.dependencia_efectiva_id || ""));
+      $("f_municipio").value = p.municipio || "";
+
+      $("f_fecha_inicio_cargo").value = excelSerialToInputDate(p.fecha_inicio_cargo);
+      $("f_fecha_fin_proyectada").value = excelSerialToInputDate(p.fecha_fin_proyectada);
+      const rem = formatExcelDate(p.fecha_fin_remanencia);
+      $("f_fecha_fin_remanencia").value = (rem === "—") ? "" : rem;
+      $("f_estatus").value = p.estatus || "";
+
+      $("f_tipo_pep").value = p.tipo_pep || "Principal";
+      onTipoPepChange();
+      if (p.persona_id_relacionado) $("f_persona_id_relacionado").value = p.persona_id_relacionado;
+
+      $("f_fuente_descripcion").value = p.fuente_descripcion || "";
+      $("f_fuente_url").value = p.fuente_url || "";
+      $("f_fecha_captura").value = excelSerialToInputDate(p.fecha_captura) || hoyISO();
+      $("f_capturado_por").value = p.capturado_por || "";
+      $("f_notas").value = p.notas || "";
+    }
+
+    // =============================================================
+    // LÓGICA CONDICIONAL DEL FORMULARIO
+    // =============================================================
+    // depPreseleccion sólo se usa al editar (al venir como Event se ignora).
+    function onCargoChange(depPreseleccion) {
+      const cargo = mapCargo[$("f_cargo_id").value];
+      const infoBox = $("cargoInfo");
+      if (cargo) {
+        infoBox.classList.remove("hidden");
+        $("info_referencia").textContent = cargo.referencia_anexo1 || "—";
+        $("info_3niveles").textContent = cargo.aplica_3_niveles || "—";
+        $("info_notas").textContent = cargo.notas || "—";
+      } else {
+        infoBox.classList.add("hidden");
+      }
+      const pre = (typeof depPreseleccion === "string") ? depPreseleccion : null;
+      aplicarLogicaDependencia(cargo, pre);
+    }
+
+    function aplicarLogicaDependencia(cargo, depPre) {
+      const sel = $("f_dependencia_efectiva_id");
+      if (cargo && cargo.dependencia_id) {
+        // Cargo con dependencia fija: autoseleccionar y deshabilitar.
+        const dep = mapDep[cargo.dependencia_id];
+        sel.innerHTML = "";
+        const opt = document.createElement("option");
+        opt.value = cargo.dependencia_id;
+        opt.textContent = cargo.dependencia_id + " — " + (dep ? dep.nombre : "");
+        sel.appendChild(opt);
+        sel.value = cargo.dependencia_id;
+        sel.disabled = true;
+      } else {
+        // Cargo transversal: habilitar y filtrar por ámbito + poder del cargo.
+        sel.disabled = false;
+        let deps = catDeps;
+        if (cargo) {
+          deps = catDeps.filter((d) =>
+            String(d.ambito) === String(cargo.ambito) &&
+            String(d.poder) === String(cargo.poder));
+        }
+        poblarDepSelect(deps, depPre);
+      }
+      onDepChange();
+    }
+
+    function poblarDepSelect(deps, seleccion) {
+      const sel = $("f_dependencia_efectiva_id");
+      sel.innerHTML = '<option value="">— Selecciona una dependencia —</option>';
+      deps.forEach((d) => {
+        const opt = document.createElement("option");
+        opt.value = d.dependencia_id;
+        opt.textContent = d.dependencia_id + " — " + (d.nombre || "");
+        sel.appendChild(opt);
+      });
+      if (seleccion) {
+        // Si la dependencia guardada no quedó en el filtro, la añadimos.
+        if (!deps.some((d) => d.dependencia_id === seleccion)) {
+          const dep = mapDep[seleccion];
+          const opt = document.createElement("option");
+          opt.value = seleccion;
+          opt.textContent = seleccion + " — " + (dep ? dep.nombre : "");
+          sel.appendChild(opt);
+        }
+        sel.value = seleccion;
+      }
+    }
+
+    function onDepChange() {
+      actualizarVisibilidadEntidadMunicipio($("f_dependencia_efectiva_id").value);
+    }
+
+    function actualizarVisibilidadEntidadMunicipio(depId) {
+      $("wrap_entidad").classList.toggle("hidden", !esDepGenerica(depId));
+      $("wrap_municipio").classList.toggle("hidden", depId !== DEP_AYUNTAMIENTO);
+    }
+
+    function onTipoPepChange() {
+      const t = $("f_tipo_pep").value;
+      const mostrar = (t === "Familiar" || t === "Asociado");
+      $("wrap_relacionado").classList.toggle("hidden", !mostrar);
+      if (mostrar) poblarRelacionados($("f_persona_id_relacionado").value);
+    }
+
+    function depNumero(id) {
+      const m = /^DEP-(\d+)$/.exec(String(id || ""));
+      return m ? parseInt(m[1], 10) : null;
+    }
+    function esDepGenerica(id) {
+      const n = depNumero(id);
+      return n !== null && n >= DEP_GENERICA_MIN && n <= DEP_GENERICA_MAX;
+    }
+
+    // =============================================================
+    // LECTURA Y VALIDACIÓN DEL FORMULARIO
+    // =============================================================
+    function leerFormulario() {
+      return {
+        persona_id: $("f_persona_id").value.trim(),
+        cargo_id: $("f_cargo_id").value,
+        dependencia_efectiva_id: $("f_dependencia_efectiva_id").value,
+        entidad_federativa: $("wrap_entidad").classList.contains("hidden") ? "" : $("f_entidad_federativa").value,
+        municipio: $("wrap_municipio").classList.contains("hidden") ? "" : $("f_municipio").value.trim(),
+        nombre_completo: $("f_nombre_completo").value.trim(),
+        nombre_normalizado: "", // calculado por Excel
+        fecha_nacimiento: $("f_fecha_nacimiento").value,
+        curp: $("f_curp").value.trim().toUpperCase(),
+        rfc: $("f_rfc").value.trim().toUpperCase(),
+        fecha_inicio_cargo: $("f_fecha_inicio_cargo").value,
+        fecha_fin_proyectada: $("f_fecha_fin_proyectada").value,
+        fecha_fin_remanencia: "", // calculado por Excel
+        estatus: "",              // calculado por Excel
+        tipo_pep: $("f_tipo_pep").value,
+        persona_id_relacionado: $("wrap_relacionado").classList.contains("hidden") ? "" : $("f_persona_id_relacionado").value,
+        fuente_descripcion: $("f_fuente_descripcion").value.trim(),
+        fuente_url: $("f_fuente_url").value.trim(),
+        fecha_captura: $("f_fecha_captura").value || hoyISO(),
+        fecha_actualizacion: hoyISO(),
+        capturado_por: $("f_capturado_por").value,
+        notas: $("f_notas").value.trim(),
+      };
+    }
+
+    function validarPersona(p) {
+      const errors = {};
+      if (!p.nombre_completo || p.nombre_completo.length < 3)
+        errors.nombre_completo = "Requerido, mínimo 3 caracteres.";
+      if (!p.cargo_id) errors.cargo_id = "Requerido.";
+      else if (!mapCargo[p.cargo_id]) errors.cargo_id = "El cargo no existe en el catálogo.";
+      if (!p.dependencia_efectiva_id) errors.dependencia_efectiva_id = "Requerido.";
+      if (!p.fecha_inicio_cargo) errors.fecha_inicio_cargo = "Requerido.";
+      if (!p.tipo_pep) errors.tipo_pep = "Requerido.";
+      if (p.curp && p.curp.length !== 18) errors.curp = "Si se captura, debe tener exactamente 18 caracteres.";
+      if (p.rfc && p.rfc.length !== 12 && p.rfc.length !== 13) errors.rfc = "Si se captura, debe tener 12 o 13 caracteres.";
+      if (p.fuente_url) { try { new URL(p.fuente_url); } catch (_) { errors.fuente_url = "URL no válida."; } }
+      if (esDepGenerica(p.dependencia_efectiva_id) && !p.entidad_federativa)
+        errors.entidad_federativa = "Requerido para esta dependencia genérica.";
+      if (p.dependencia_efectiva_id === DEP_AYUNTAMIENTO && !p.municipio)
+        errors.municipio = "Requerido para Ayuntamiento Municipal.";
+      return { valid: Object.keys(errors).length === 0, errors };
+    }
+
+    // Campos con mensaje de error en el formulario.
+    const CAMPOS_ERROR = [
+      "nombre_completo", "curp", "rfc", "cargo_id", "dependencia_efectiva_id",
+      "fecha_inicio_cargo", "tipo_pep", "entidad_federativa", "municipio", "fuente_url",
+    ];
+
+    function limpiarErrores() {
+      CAMPOS_ERROR.forEach((c) => {
+        const e = $("err_" + c); if (e) { e.classList.add("hidden"); e.textContent = ""; }
+        const inp = $("f_" + c); if (inp) inp.classList.remove("inp-error");
+      });
+    }
+
+    function mostrarErrores(errors) {
+      limpiarErrores();
+      let primer = null;
+      CAMPOS_ERROR.forEach((c) => {
+        if (errors[c]) {
+          const e = $("err_" + c);
+          if (e) { e.textContent = errors[c]; e.classList.remove("hidden"); }
+          const inp = $("f_" + c);
+          if (inp) { inp.classList.add("inp-error"); if (!primer) primer = inp; }
+        }
+      });
+      if (primer) primer.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+
+    // =============================================================
+    // GUARDAR (crear / editar) Y SOFT DELETE
+    // =============================================================
+    function wbPersonas() {
+      return GRAPH_BASE + "/me/drive/root:" + WORKBOOK_PATH + ":/workbook/tables/" + TABLE_PERSONAS;
+    }
+
+    async function guardarPersona() {
+      const persona = leerFormulario();
+      const { valid, errors } = validarPersona(persona);
+      if (!valid) { mostrarErrores(errors); return; }
+      limpiarErrores();
+      $("saveError").classList.add("hidden");
+
+      const editando = estadoApp.personaEditando;
+      const valores = construirValores(persona, datosCargados.idx);
+
+      mostrarOverlay(true, editando ? "Actualizando…" : "Guardando…");
+      try {
+        const wb = wbPersonas();
+        let resp;
+        if (editando) {
+          resp = await graphFetch(wb + "/rows/itemAt(index=" + editando.index + ")", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ values: [valores] }),
+          });
+        } else {
+          resp = await graphFetch(wb + "/rows/add", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ values: [valores] }),
+          });
+        }
+        if (!resp.ok) throw new Error(await mensajeErrorGraph(resp));
+
+        mostrarOverlay(false);
+        estadoApp.dirty = false;
+        estadoApp.personaEditando = null;
+        mostrarVista("lista");
+        mostrarToast("Persona guardada correctamente", "ok");
+        await cargarPersonas();
+      } catch (err) {
+        mostrarOverlay(false);
+        console.error("Error al guardar:", err);
+        $("saveError").textContent = err.message || String(err);
+        $("saveError").classList.remove("hidden");
+        $("saveError").scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }
+
+    async function softDelete(fila) {
+      const idx = datosCargados.idx;
+      const v = fila.values[0];
+      const nombre = v[idx["nombre_completo"]] || v[idx["persona_id"]] || "esta persona";
+      if (!confirm("¿Marcar a " + nombre + " como eliminado?\n\n" +
+        "Esta acción se puede revertir editando el campo tipo_pep.")) return;
+
+      const valores = valoresParaSoftDelete(v, idx);
+      mostrarOverlay(true, "Eliminando…");
+      try {
+        const resp = await graphFetch(wbPersonas() + "/rows/itemAt(index=" + fila.index + ")", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ values: [valores] }),
+        });
+        if (!resp.ok) throw new Error(await mensajeErrorGraph(resp));
+        mostrarOverlay(false);
+        mostrarToast("Persona marcada como eliminada", "ok");
+        await cargarPersonas();
+      } catch (err) {
+        mostrarOverlay(false);
+        console.error("Error en soft delete:", err);
+        mostrarToast(err.message || "Error al eliminar", "err");
+      }
+    }
+
+    // Construye el array de valores en el orden real de columnas (idx).
+    function construirValores(persona, idx) {
+      const arr = new Array(Object.keys(idx).length).fill("");
+      COLUMNAS_PERSONAS.forEach((col) => {
+        const i = idx[col];
+        if (i === undefined) return;
+        if (COLS_CALCULADAS.includes(col)) { arr[i] = ""; return; } // Excel recalcula
+        let v = persona[col];
+        if (COLS_FECHA_ALL.includes(col)) {
+          const s = dateToExcelSerial(v);
+          arr[i] = (s === null) ? "" : s;
+        } else {
+          arr[i] = (v === undefined || v === null) ? "" : v;
+        }
+      });
+      return arr;
+    }
+
+    // Para soft delete: parte de la fila existente y sólo cambia lo necesario.
+    function valoresParaSoftDelete(rawValues, idx) {
+      const arr = rawValues.slice();
+      COLS_CALCULADAS.forEach((col) => { if (idx[col] !== undefined) arr[idx[col]] = ""; });
+      if (idx["tipo_pep"] !== undefined) arr[idx["tipo_pep"]] = "Eliminado";
+      if (idx["fecha_actualizacion"] !== undefined) arr[idx["fecha_actualizacion"]] = dateToExcelSerial(hoyISO());
+      return arr;
+    }
+
+    // =============================================================
+    // CONVERSIÓN DE FECHAS Y UTILIDADES
+    // =============================================================
+    function dateToExcelSerial(dateString) {
+      if (!dateString) return null;
+      const date = new Date(dateString + "T00:00:00Z");
+      const epoch = new Date("1899-12-30T00:00:00Z"); // 30, no 31 (bug bisiesto 1900)
+      return Math.floor((date - epoch) / 86400000);
+    }
+
+    // Inverso: serial de Excel -> "YYYY-MM-DD" para inputs type=date.
+    function excelSerialToInputDate(serial) {
+      if (serial === null || serial === undefined || serial === "" || isNaN(serial)) return "";
+      const ms = (Number(serial) - 25569) * 86400 * 1000;
+      const d = new Date(ms);
+      const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+      const dd = String(d.getUTCDate()).padStart(2, "0");
+      return d.getUTCFullYear() + "-" + mm + "-" + dd;
+    }
+
+    function hoyISO() {
+      const d = new Date();
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const dd = String(d.getDate()).padStart(2, "0");
+      return d.getFullYear() + "-" + mm + "-" + dd;
+    }
+
+    function siguientePersonaId() {
+      const idx = datosCargados.idx;
+      let max = 0;
+      datosCargados.filas.forEach((fila) => {
+        const pid = String(fila.values[0][idx["persona_id"]] ?? "");
+        const m = /^PEP-(\d+)$/.exec(pid);
+        if (m) { const n = parseInt(m[1], 10); if (n > max) max = n; }
+      });
+      return "PEP-" + String(max + 1).padStart(4, "0");
+    }
+
+    // =============================================================
+    // ESTADO "DIRTY", TOAST Y OVERLAY
+    // =============================================================
+    function marcarDirty() { setDirty(true); }
+    function setDirty(v) {
+      estadoApp.dirty = v;
+      const ind = $("dirtyIndicator");
+      ind.textContent = v ? "Borrador no guardado" : "Sin cambios";
+      ind.className = "text-xs " + (v ? "text-amber-600 font-medium" : "text-slate-400");
+    }
+
+    let toastTimer = null;
+    function mostrarToast(msg, tipo) {
+      const t = $("toast");
+      t.textContent = msg;
+      t.className = "fixed bottom-5 right-5 z-50 px-4 py-3 rounded-lg shadow-lg text-sm font-medium text-white " +
+        (tipo === "err" ? "bg-red-600" : "bg-green-600");
+      t.classList.remove("hidden");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => t.classList.add("hidden"), 3500);
+    }
+
+    function mostrarOverlay(mostrar, texto) {
+      if (texto) $("overlayText").textContent = texto;
+      $("overlay").classList.toggle("hidden", !mostrar);
+    }
+
+    // =============================================================
+    // GRAPH FETCH con manejo de 401 (re-login) y red caída
+    // =============================================================
+    async function graphFetch(url, options = {}, reintentos = 1) {
+      let token;
+      try {
+        token = await obtenerToken();
+      } catch (_) {
+        await msalInstance.loginPopup({ scopes: SCOPES });
+        token = await obtenerToken();
+      }
+      const opts = Object.assign({}, options);
+      opts.headers = Object.assign({}, options.headers || {}, { Authorization: "Bearer " + token });
+
+      let resp;
+      try {
+        resp = await fetch(url, opts);
+      } catch (_) {
+        throw new Error("Sin conexión a OneDrive. Verifica tu conexión.");
+      }
+
+      // 401: token expirado/invalidado -> re-login interactivo y reintento.
+      if (resp.status === 401 && reintentos > 0) {
+        try {
+          await msalInstance.acquireTokenPopup({ scopes: SCOPES, account: getCuentaActiva() });
+        } catch (_) {
+          await msalInstance.loginPopup({ scopes: SCOPES });
+        }
+        return graphFetch(url, options, reintentos - 1);
+      }
+      return resp;
+    }
+
+    // Mensaje legible para errores de Graph en operaciones de escritura.
+    async function mensajeErrorGraph(resp) {
+      if (resp.status === 409) return "Otra persona o sesión modificó el archivo. Recarga y reintenta.";
+      let detalle = resp.status + " " + resp.statusText;
+      try {
+        const j = await resp.json();
+        if (j.error && j.error.message) detalle = j.error.message;
+      } catch (_) { /* sin JSON */ }
+      return "Error al guardar (" + resp.status + "): " + detalle;
+    }
 
     // Convierte una respuesta de error de Graph en un Error legible.
     async function graphError(resp) {
