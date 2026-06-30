@@ -204,6 +204,12 @@
           </div>
           <h2 id="detalleTitulo" class="text-xl font-bold text-slate-900">Nueva persona PEP</h2>
 
+          <!-- Aviso: este registro se inició desde el catálogo de Cargos -->
+          <div id="origenCargoBanner" class="hidden rounded-lg bg-blue-50 border border-blue-200 text-blue-900 text-sm px-4 py-3">
+            📋 Creando registro a partir del cargo <strong id="origenCargoTexto"></strong>.
+            No olvides pegar abajo la <strong>URL de la fuente</strong> donde se consultó la información.
+          </div>
+
           <!-- Sección 1 — Identificación -->
           <div class="sec bg-white">
             <h3 class="sec-title">1 · Identificación</h3>
@@ -443,6 +449,7 @@
                     <th class="px-4 py-3 font-semibold whitespace-nowrap">dependencia</th>
                     <th class="px-4 py-3 font-semibold whitespace-nowrap">3 niveles</th>
                     <th class="px-4 py-3 font-semibold whitespace-nowrap">referencia</th>
+                    <th class="px-4 py-3 font-semibold whitespace-nowrap text-center">acciones</th>
                   </tr>
                 </thead>
                 <tbody id="tbodyCargos" class="divide-y divide-slate-100"></tbody>
@@ -1137,6 +1144,18 @@
           if (c.notas && i === 0) td.title = "Notas: " + c.notas;
           tr.appendChild(td);
         });
+
+        // Columna de acciones: crear un registro de persona a partir de este cargo.
+        const tdAcc = document.createElement("td");
+        tdAcc.className = "px-4 py-2.5 whitespace-nowrap text-center";
+        const btnCrear = document.createElement("button");
+        btnCrear.type = "button";
+        btnCrear.className = "text-xs font-medium px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition shadow-sm";
+        btnCrear.textContent = "+ Crear registro";
+        btnCrear.addEventListener("click", () => crearRegistroDesdeCargo(c));
+        tdAcc.appendChild(btnCrear);
+        tr.appendChild(tdAcc);
+
         tbody.appendChild(tr);
       });
 
@@ -1185,6 +1204,30 @@
       setTimeout(() => $("f_nombre_completo").focus(), 50);
     }
 
+    // Abre el formulario en modo "nueva persona" pero pre-llenado a partir
+    // de un cargo del catálogo (cargo_id + dependencia resuelta en cascada).
+    // El usuario solo necesita capturar el nombre y pegar la URL de la fuente.
+    function crearRegistroDesdeCargo(cargo) {
+      mostrarSeccion("personas");
+      abrirNueva();
+
+      $("f_cargo_id").value = cargo.cargo_id;
+      onCargoChange();
+
+      const banner = $("origenCargoBanner");
+      $("origenCargoTexto").textContent = cargo.cargo_id + " — " + (cargo.cargo || "");
+      banner.classList.remove("hidden");
+
+      setDirty(false); // los cambios anteriores son pre-llenado, no edición del usuario
+
+      // En este flujo lo siguiente que el usuario debe hacer es pegar la URL.
+      setTimeout(() => {
+        const url = $("f_fuente_url");
+        url.scrollIntoView({ behavior: "smooth", block: "center" });
+        url.focus();
+      }, 50);
+    }
+
     function abrirEditar(fila) {
       const idx = datosCargados.idx;
       const v = fila.values[0];
@@ -1209,6 +1252,7 @@
       $("formPersona").reset();
       limpiarErrores();
       $("saveError").classList.add("hidden");
+      $("origenCargoBanner").classList.add("hidden");
       poblarSelectCargos();
       poblarEntidades();
       $("cargoInfo").classList.add("hidden");
