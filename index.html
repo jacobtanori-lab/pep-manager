@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PEP Manager</title>
+
+  <!-- Tailwind CSS por CDN (sin build tools) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- MSAL.js v3 (Browser) por CDN para autenticación con Microsoft -->
+  <script src="https://alcdn.msauth.net/browser/3.7.1/js/msal-browser.min.js"></script>
+</head>
+
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col">
+
+  <!-- ============================================================= -->
+  <!-- HEADER STICKY: título + (cuando hay sesión) usuario y logout  -->
+  <!-- ============================================================= -->
+  <header class="sticky top-0 z-10 bg-white border-b border-slate-200 shadow-sm">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+      <div class="flex items-center gap-3">
+        <!-- Logo simple: escudo en SVG -->
+        <div class="w-9 h-9 rounded-lg bg-blue-600 flex items-center justify-center text-white font-bold shadow">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+          </svg>
+        </div>
+        <div>
+          <h1 class="text-lg font-bold leading-tight text-slate-900">PEP Manager</h1>
+          <p class="text-xs text-slate-500 leading-tight hidden sm:block">
+            Repositorio personal de Personas Políticamente Expuestas
+          </p>
+        </div>
+      </div>
+
+      <!-- Zona de usuario: oculta hasta que haya sesión -->
+      <div id="userZone" class="hidden items-center gap-3">
+        <span id="userName" class="text-sm font-medium text-slate-700 hidden sm:inline"></span>
+        <button id="btnLogout"
+          class="text-sm font-medium px-3 py-2 rounded-lg border border-slate-300 hover:bg-slate-100 transition shadow-sm">
+          Cerrar sesión
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="flex-1 w-full max-w-6xl mx-auto px-4 py-8">
+
+    <!-- ============================================================= -->
+    <!-- VISTA 1: LANDING / LOGIN (sin sesión)                          -->
+    <!-- ============================================================= -->
+    <section id="viewLogin" class="text-center py-16">
+      <div class="mx-auto w-16 h-16 rounded-2xl bg-blue-600 flex items-center justify-center text-white shadow-lg mb-6">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-9 h-9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+        </svg>
+      </div>
+      <h2 class="text-3xl font-bold text-slate-900">PEP Manager</h2>
+      <p class="mt-2 text-slate-500 max-w-xl mx-auto">
+        Repositorio personal de Personas Políticamente Expuestas
+        (Anexo 1 SHCP 2020)
+      </p>
+
+      <!-- Botón de login con estilo Microsoft (gradient azul) -->
+      <button id="btnLogin"
+        class="mt-8 inline-flex items-center gap-3 px-6 py-3 rounded-lg text-white font-semibold
+               bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800
+               shadow-lg shadow-blue-600/20 transition">
+        <!-- Logo de Microsoft (4 cuadros) -->
+        <svg class="w-5 h-5" viewBox="0 0 23 23" xmlns="http://www.w3.org/2000/svg">
+          <rect x="1" y="1"  width="10" height="10" fill="#f25022"/>
+          <rect x="12" y="1"  width="10" height="10" fill="#7fba00"/>
+          <rect x="1" y="12" width="10" height="10" fill="#00a4ef"/>
+          <rect x="12" y="12" width="10" height="10" fill="#ffb900"/>
+        </svg>
+        Iniciar sesión con Microsoft
+      </button>
+
+      <p id="loginError" class="hidden mt-6 text-sm text-red-600"></p>
+    </section>
+
+    <!-- ============================================================= -->
+    <!-- VISTA 2: APP (con sesión) — tabla de personas                 -->
+    <!-- ============================================================= -->
+    <section id="viewApp" class="hidden">
+      <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+
+        <div class="px-5 py-4 border-b border-slate-200 flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <h2 class="text-lg font-semibold text-slate-900">Personas PEP capturadas</h2>
+            <p class="text-xs text-slate-500">Tabla <code class="bg-slate-100 px-1 rounded">tbl_Personas</code> · OneDrive</p>
+          </div>
+          <button id="btnReload"
+            class="text-sm font-medium px-3 py-2 rounded-lg border border-slate-300 hover:bg-slate-100 transition shadow-sm">
+            Recargar
+          </button>
+        </div>
+
+        <!-- Indicador de carga -->
+        <div id="loading" class="hidden p-12 flex flex-col items-center justify-center text-slate-500">
+          <svg class="animate-spin w-8 h-8 text-blue-600 mb-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+          </svg>
+          <span class="text-sm">Cargando personas desde OneDrive…</span>
+        </div>
+
+        <!-- Mensaje de error (Graph) -->
+        <div id="dataError" class="hidden p-6 m-5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm"></div>
+
+        <!-- Estado vacío -->
+        <div id="emptyState" class="hidden p-12 text-center text-slate-500 text-sm">
+          No hay personas capturadas aún
+        </div>
+
+        <!-- Tabla responsiva -->
+        <div id="tableWrap" class="hidden overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="bg-slate-100 text-left text-slate-700">
+                <th class="px-4 py-3 font-semibold whitespace-nowrap">persona_id</th>
+                <th class="px-4 py-3 font-semibold whitespace-nowrap">nombre_completo</th>
+                <th class="px-4 py-3 font-semibold whitespace-nowrap">cargo_id</th>
+                <th class="px-4 py-3 font-semibold whitespace-nowrap">dependencia_efectiva_id</th>
+                <th class="px-4 py-3 font-semibold whitespace-nowrap">estatus</th>
+                <th class="px-4 py-3 font-semibold whitespace-nowrap">fecha_inicio_cargo</th>
+              </tr>
+            </thead>
+            <tbody id="tableBody" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+
+        <div id="rowCount" class="hidden px-5 py-3 text-xs text-slate-400 border-t border-slate-100"></div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="py-6 text-center text-xs text-slate-400">
+    PEP Manager · Uso interno de cumplimiento
+  </footer>
+
+  <!-- ============================================================= -->
+  <!-- LÓGICA: MSAL + Microsoft Graph                                 -->
+  <!-- ============================================================= -->
+  <script>
+    "use strict";
+
+    // -------------------------------------------------------------
+    // CONFIGURACIÓN (constantes editables al inicio)
+    // -------------------------------------------------------------
+    const CLIENT_ID = "a5b306a7-4649-4395-b4ac-2b58094510df";
+
+    // IMPORTANTE: usar "common" para permitir cuentas MSA personales.
+    // El tenant específico solo aplicaría en un escenario workplace.
+    const AUTHORITY = "https://login.microsoftonline.com/common";
+
+    // redirectUri: se calcula desde la ubicación actual para que
+    // funcione igual en local (http://localhost:5500/) y en
+    // GitHub Pages (https://jacobtanori-lab.github.io/pep-manager/).
+    // Ambas URIs deben estar registradas como SPA en Azure.
+    const REDIRECT_URI = window.location.origin + window.location.pathname;
+
+    // Permisos delegados de Graph. offline_access lo agrega MSAL
+    // automáticamente para obtener refresh tokens.
+    const SCOPES = ["User.Read", "Files.ReadWrite"];
+
+    // Ruta del archivo Excel en OneDrive personal y tabla a leer.
+    const WORKBOOK_PATH = "/Apps/PEP-Manager/database.xlsx";
+    const TABLE_PERSONAS = "tbl_Personas";
+    const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
+
+    // Columnas que mostraremos (en orden) — se mapean por nombre,
+    // así que el orden real de la tabla en Excel no importa.
+    const COLS_VISIBLES = [
+      "persona_id",
+      "nombre_completo",
+      "cargo_id",
+      "dependencia_efectiva_id",
+      "estatus",
+      "fecha_inicio_cargo",
+    ];
+
+    // -------------------------------------------------------------
+    // Inicialización de MSAL
+    // -------------------------------------------------------------
+    const msalConfig = {
+      auth: {
+        clientId: CLIENT_ID,
+        authority: AUTHORITY,
+        redirectUri: REDIRECT_URI,
+      },
+      cache: {
+        cacheLocation: "sessionStorage", // no localStorage por seguridad
+        storeAuthStateInCookie: false,
+      },
+    };
+
+    const msalInstance = new msal.PublicClientApplication(msalConfig);
+
+    // -------------------------------------------------------------
+    // Referencias al DOM
+    // -------------------------------------------------------------
+    const $ = (id) => document.getElementById(id);
+    const viewLogin = $("viewLogin");
+    const viewApp = $("viewApp");
+    const userZone = $("userZone");
+    const userName = $("userName");
+    const loginError = $("loginError");
+    const loading = $("loading");
+    const dataError = $("dataError");
+    const emptyState = $("emptyState");
+    const tableWrap = $("tableWrap");
+    const tableBody = $("tableBody");
+    const rowCount = $("rowCount");
+
+    // -------------------------------------------------------------
+    // Arranque: MSAL v3 requiere initialize() antes de usarse.
+    // Detectamos si ya hay una cuenta en caché para auto-login.
+    // -------------------------------------------------------------
+    (async function init() {
+      await msalInstance.initialize();
+
+      // Por si en algún flujo se usara redirect en vez de popup.
+      await msalInstance.handleRedirectPromise();
+
+      const cuenta = getCuentaActiva();
+      if (cuenta) {
+        mostrarApp(cuenta);
+        cargarPersonas();
+      } else {
+        mostrarLogin();
+      }
+    })();
+
+    // Devuelve la cuenta activa (o la primera disponible) o null.
+    function getCuentaActiva() {
+      const activa = msalInstance.getActiveAccount();
+      if (activa) return activa;
+      const cuentas = msalInstance.getAllAccounts();
+      if (cuentas.length > 0) {
+        msalInstance.setActiveAccount(cuentas[0]);
+        return cuentas[0];
+      }
+      return null;
+    }
+
+    // -------------------------------------------------------------
+    // Login (popup preferido) y logout
+    // -------------------------------------------------------------
+    $("btnLogin").addEventListener("click", async () => {
+      loginError.classList.add("hidden");
+      try {
+        const resultado = await msalInstance.loginPopup({ scopes: SCOPES });
+        msalInstance.setActiveAccount(resultado.account);
+        mostrarApp(resultado.account);
+        cargarPersonas();
+      } catch (err) {
+        console.error("Error de login:", err);
+        loginError.textContent = "No se pudo iniciar sesión: " + (err.message || err);
+        loginError.classList.remove("hidden");
+      }
+    });
+
+    $("btnLogout").addEventListener("click", async () => {
+      const cuenta = getCuentaActiva();
+      await msalInstance.logoutPopup({ account: cuenta });
+      mostrarLogin();
+    });
+
+    $("btnReload").addEventListener("click", cargarPersonas);
+
+    // -------------------------------------------------------------
+    // Cambios de vista
+    // -------------------------------------------------------------
+    function mostrarLogin() {
+      viewLogin.classList.remove("hidden");
+      viewApp.classList.add("hidden");
+      userZone.classList.add("hidden");
+      userZone.classList.remove("flex");
+    }
+
+    function mostrarApp(cuenta) {
+      viewLogin.classList.add("hidden");
+      viewApp.classList.remove("hidden");
+      userZone.classList.remove("hidden");
+      userZone.classList.add("flex");
+      userName.textContent = cuenta.name || cuenta.username || "Sesión iniciada";
+    }
+
+    // -------------------------------------------------------------
+    // Obtención de token: silencioso primero, popup como fallback
+    // -------------------------------------------------------------
+    async function obtenerToken() {
+      const cuenta = getCuentaActiva();
+      if (!cuenta) throw new Error("No hay sesión activa.");
+
+      try {
+        const r = await msalInstance.acquireTokenSilent({ scopes: SCOPES, account: cuenta });
+        return r.accessToken;
+      } catch (err) {
+        // Si se requiere interacción del usuario, abrimos popup.
+        if (err instanceof msal.InteractionRequiredAuthError) {
+          const r = await msalInstance.acquireTokenPopup({ scopes: SCOPES, account: cuenta });
+          return r.accessToken;
+        }
+        throw err;
+      }
+    }
+
+    // -------------------------------------------------------------
+    // Lectura de tbl_Personas vía Microsoft Graph (Workbook API)
+    // -------------------------------------------------------------
+    async function cargarPersonas() {
+      // Reset de estados visuales
+      ocultarTodo();
+      loading.classList.remove("hidden");
+
+      try {
+        const token = await obtenerToken();
+        const headers = { Authorization: "Bearer " + token };
+
+        // URL base del workbook (ruta del archivo + :/workbook)
+        const wb = GRAPH_BASE +
+          "/me/drive/root:" + WORKBOOK_PATH + ":/workbook/tables/" + TABLE_PERSONAS;
+
+        // 1) Columnas (para mapear nombre -> índice, sin depender del orden)
+        // 2) Filas (los datos)
+        const [colsResp, rowsResp] = await Promise.all([
+          fetch(wb + "/columns", { headers }),
+          fetch(wb + "/rows", { headers }),
+        ]);
+
+        if (!colsResp.ok) throw await graphError(colsResp);
+        if (!rowsResp.ok) throw await graphError(rowsResp);
+
+        const colsData = await colsResp.json();
+        const rowsData = await rowsResp.json();
+
+        // Mapa: nombre_columna -> índice
+        const idx = {};
+        (colsData.value || []).forEach((c) => { idx[c.name] = c.index; });
+
+        const filas = rowsData.value || [];
+
+        loading.classList.add("hidden");
+
+        if (filas.length === 0) {
+          emptyState.classList.remove("hidden");
+          return;
+        }
+
+        // Render de filas
+        tableBody.innerHTML = "";
+        filas.forEach((fila) => {
+          const valores = fila.values[0]; // cada fila trae un array dentro de values
+          const tr = document.createElement("tr");
+          tr.className = "even:bg-slate-50 hover:bg-blue-50/40 transition";
+
+          COLS_VISIBLES.forEach((nombreCol) => {
+            const td = document.createElement("td");
+            td.className = "px-4 py-2.5 whitespace-nowrap text-slate-700";
+            const i = idx[nombreCol];
+            const valor = (i !== undefined && valores[i] !== null && valores[i] !== "")
+              ? valores[i] : "—";
+            td.textContent = valor;
+            tr.appendChild(td);
+          });
+
+          tableBody.appendChild(tr);
+        });
+
+        tableWrap.classList.remove("hidden");
+        rowCount.textContent = filas.length + " persona(s)";
+        rowCount.classList.remove("hidden");
+
+      } catch (err) {
+        console.error("Error al cargar personas:", err);
+        loading.classList.add("hidden");
+        dataError.textContent = "Error al leer los datos: " + (err.message || err);
+        dataError.classList.remove("hidden");
+      }
+    }
+
+    // Convierte una respuesta de error de Graph en un Error legible.
+    async function graphError(resp) {
+      let detalle = resp.status + " " + resp.statusText;
+      try {
+        const j = await resp.json();
+        if (j.error && j.error.message) detalle = j.error.message;
+      } catch (_) { /* respuesta sin JSON */ }
+
+      if (resp.status === 404) {
+        detalle = "No se encontró el archivo o la tabla. Verifica que exista " +
+          WORKBOOK_PATH + " con la tabla " + TABLE_PERSONAS + ". (" + detalle + ")";
+      }
+      return new Error(detalle);
+    }
+
+    // Oculta todos los estados de la sección de datos.
+    function ocultarTodo() {
+      loading.classList.add("hidden");
+      dataError.classList.add("hidden");
+      emptyState.classList.add("hidden");
+      tableWrap.classList.add("hidden");
+      rowCount.classList.add("hidden");
+    }
+  </script>
+</body>
+</html>
