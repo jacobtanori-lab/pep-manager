@@ -1518,6 +1518,64 @@
       return GRAPH_BASE + "/me/drive/root:" + WORKBOOK_PATH + ":/workbook/tables/" + TABLE_PERSONAS;
     }
 
+    // Tras guardar, fija el formato "dd/mm/yyyy" en las celdas de fecha de
+    // la fila para que Excel las muestre como fecha y no como el número
+    // serial crudo (p. ej. 22683). Es solo presentación sobre datos que ya
+    // se guardaron bien: si esto falla, no se reporta como error de guardado.
+    async function aplicarFormatoFechas(rowIndex, idx, persona) {
+      try {
+        const token = await obtenerToken();
+        const headers = { Authorization: "Bearer " + token, "Content-Type": "application/json" };
+
+        // Necesitamos la hoja y la posición absoluta de la fila/columnas;
+        // la API de tablas no expone formato, solo la API de rangos lo hace.
+        const rangoResp = await fetch(
+          wbPersonas() + "/rows/itemAt(index=" + rowIndex + ")/range",
+          { headers }
+        );
+        if (!rangoResp.ok) return;
+        const rango = await rangoResp.json();
+
+        let hoja = (rango.address || "").split("!")[0];
+        if (hoja.startsWith("'") && hoja.endsWith("'")) {
+          hoja = hoja.slice(1, -1).replace(/''/g, "'"); // nombres de hoja con espacios
+        }
+        if (!hoja) return;
+
+        const colBase = rango.columnIndex;
+        const filaAbs = rango.rowIndex + 1; // direcciones de Excel son 1-based
+        const wsBase = GRAPH_BASE + "/me/drive/root:" + WORKBOOK_PATH +
+          ":/workbook/worksheets/" + encodeURIComponent(hoja);
+
+        const llamadas = COLS_FECHA_ALL
+          .filter((col) => idx[col] !== undefined && persona[col])
+          .map((col) => {
+            const direccion = columnaALetra(colBase + idx[col]) + filaAbs;
+            return fetch(wsBase + "/range(address='" + direccion + "')", {
+              method: "PATCH",
+              headers,
+              body: JSON.stringify({ numberFormat: [["dd/mm/yyyy"]] }),
+            });
+          });
+
+        await Promise.all(llamadas);
+      } catch (err) {
+        console.warn("No se pudo aplicar formato de fecha (los datos sí se guardaron):", err);
+      }
+    }
+
+    // Convierte un índice de columna 0-based a letra(s) de Excel (0→A, 25→Z, 26→AA…).
+    function columnaALetra(indiceCero) {
+      let n = indiceCero + 1;
+      let letra = "";
+      while (n > 0) {
+        const resto = (n - 1) % 26;
+        letra = String.fromCharCode(65 + resto) + letra;
+        n = Math.floor((n - 1) / 26);
+      }
+      return letra;
+    }
+
     async function guardarPersona() {
       const persona = leerFormulario();
       const { valid, errors } = validarPersona(persona);
@@ -1547,6 +1605,17 @@
           });
         }
         if (!resp.ok) throw new Error(await mensajeErrorGraph(resp));
+
+        // Índice de la fila guardada: en edición ya lo sabíamos; al crear,
+        // Graph lo devuelve en el cuerpo de la respuesta de rows/add.
+        let filaIndex = editando ? editando.index : null;
+        if (!editando) {
+          try { const creada = await resp.json(); filaIndex = creada.index; }
+          catch (_) { /* no es crítico para el guardado en sí */ }
+        }
+        if (filaIndex !== null) {
+          await aplicarFormatoFechas(filaIndex, datosCargados.idx, persona);
+        }
 
         mostrarOverlay(false);
         estadoApp.dirty = false;
@@ -1579,6 +1648,7 @@
           body: JSON.stringify({ values: [valores] }),
         });
         if (!resp.ok) throw new Error(await mensajeErrorGraph(resp));
+        await aplicarFormatoFechas(fila.index, idx, { fecha_actualizacion: hoyISO() });
         mostrarOverlay(false);
         mostrarToast("Persona marcada como eliminada", "ok");
         await cargarPersonas();
