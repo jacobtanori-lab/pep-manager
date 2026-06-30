@@ -317,6 +317,13 @@
         );
         const appsData = appsResp.ok ? await appsResp.json() : await appsResp.json().catch(() => null);
 
+        // 3) Contenido de la carpeta /Apps/PEP-Manager (para ver el ID de database.xlsx)
+        const pepResp = await fetch(
+          GRAPH_BASE + "/me/drive/root:/Apps/PEP-Manager:/children",
+          { headers }
+        );
+        const pepData = pepResp.ok ? await pepResp.json() : await pepResp.json().catch(() => null);
+
         // Resumen legible de nombres en la raíz
         const nombresRaiz = (rootData && rootData.value)
           ? rootData.value.map((it) => (it.folder ? "📁 " : "📄 ") + it.name)
@@ -327,7 +334,9 @@
           nombresRaiz.join("\n") + "\n\n" +
           JSON.stringify(rootData, null, 2) + "\n\n" +
           "=== CARPETA /Apps (" + appsResp.status + ") ===\n" +
-          JSON.stringify(appsData, null, 2);
+          JSON.stringify(appsData, null, 2) + "\n\n" +
+          "=== CONTENIDO DE /Apps/PEP-Manager (" + pepResp.status + ") ===\n" +
+          JSON.stringify(pepData, null, 2);
 
         diagOutput.textContent = salida;
       } catch (err) {
