@@ -89,19 +89,15 @@
         <div class="px-5 py-4 border-b border-slate-200 flex items-center justify-between gap-3 flex-wrap">
           <div>
             <h2 class="text-lg font-semibold text-slate-900">Personas PEP capturadas</h2>
-            <p class="text-xs text-slate-500">Tabla <code class="bg-slate-100 px-1 rounded">tbl_Personas</code> · OneDrive</p>
+            <p class="text-xs text-slate-500">
+              Tabla <code class="bg-slate-100 px-1 rounded">tbl_Personas</code> · OneDrive
+              <span id="lastUpdated" class="ml-1 text-slate-400"></span>
+            </p>
           </div>
-          <div class="flex items-center gap-2">
-            <!-- DIAGNÓSTICO TEMPORAL: listar carpetas de OneDrive -->
-            <button id="btnDiag"
-              class="text-sm font-medium px-3 py-2 rounded-lg border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 transition shadow-sm">
-              🔍 Diagnóstico OneDrive
-            </button>
-            <button id="btnReload"
-              class="text-sm font-medium px-3 py-2 rounded-lg border border-slate-300 hover:bg-slate-100 transition shadow-sm">
-              Recargar
-            </button>
-          </div>
+          <button id="btnReload"
+            class="text-sm font-medium px-3 py-2 rounded-lg border border-slate-300 hover:bg-slate-100 transition shadow-sm">
+            Recargar
+          </button>
         </div>
 
         <!-- Indicador de carga -->
@@ -122,32 +118,34 @@
         </div>
 
         <!-- Tabla responsiva -->
-        <div id="tableWrap" class="hidden overflow-x-auto">
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="bg-slate-100 text-left text-slate-700">
-                <th class="px-4 py-3 font-semibold whitespace-nowrap">persona_id</th>
-                <th class="px-4 py-3 font-semibold whitespace-nowrap">nombre_completo</th>
-                <th class="px-4 py-3 font-semibold whitespace-nowrap">cargo_id</th>
-                <th class="px-4 py-3 font-semibold whitespace-nowrap">dependencia_efectiva_id</th>
-                <th class="px-4 py-3 font-semibold whitespace-nowrap">estatus</th>
-                <th class="px-4 py-3 font-semibold whitespace-nowrap">fecha_inicio_cargo</th>
-              </tr>
-            </thead>
-            <tbody id="tableBody" class="divide-y divide-slate-100"></tbody>
-          </table>
+        <div id="tableWrap" class="hidden">
+          <!-- Buscador en vivo (filtra el array ya cargado, sin llamar a Graph) -->
+          <div class="px-5 py-3 border-b border-slate-100">
+            <input id="searchInput" type="text" placeholder="Buscar por nombre o ID…"
+              class="w-full sm:w-80 text-sm px-3 py-2 rounded-lg border border-slate-300
+                     focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
+          </div>
+
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="bg-slate-100 text-left text-slate-700">
+                  <th class="px-4 py-3 font-semibold whitespace-nowrap">persona_id</th>
+                  <th class="px-4 py-3 font-semibold whitespace-nowrap">nombre_completo</th>
+                  <th class="px-4 py-3 font-semibold whitespace-nowrap">cargo_id</th>
+                  <th class="px-4 py-3 font-semibold whitespace-nowrap">dependencia_efectiva_id</th>
+                  <th class="px-4 py-3 font-semibold whitespace-nowrap">fecha_inicio_cargo</th>
+                  <th class="px-4 py-3 font-semibold whitespace-nowrap">fecha_fin_proyectada</th>
+                  <th class="px-4 py-3 font-semibold whitespace-nowrap">estatus</th>
+                  <th class="px-4 py-3 font-semibold whitespace-nowrap text-center">ver</th>
+                </tr>
+              </thead>
+              <tbody id="tableBody" class="divide-y divide-slate-100"></tbody>
+            </table>
+          </div>
         </div>
 
         <div id="rowCount" class="hidden px-5 py-3 text-xs text-slate-400 border-t border-slate-100"></div>
-
-        <!-- DIAGNÓSTICO TEMPORAL: salida del listado de OneDrive -->
-        <div id="diagWrap" class="hidden border-t border-amber-200 bg-amber-50/40 p-5">
-          <div class="flex items-center justify-between mb-2">
-            <h3 class="text-sm font-semibold text-amber-800">🔍 Diagnóstico OneDrive (temporal)</h3>
-            <button id="btnDiagClose" class="text-xs text-amber-700 hover:underline">Cerrar</button>
-          </div>
-          <pre id="diagOutput" class="text-xs bg-white border border-amber-200 rounded-lg p-3 overflow-x-auto whitespace-pre text-slate-700"></pre>
-        </div>
       </div>
     </section>
 
@@ -194,9 +192,13 @@
       "nombre_completo",
       "cargo_id",
       "dependencia_efectiva_id",
-      "estatus",
       "fecha_inicio_cargo",
+      "fecha_fin_proyectada",
+      "estatus",
     ];
+
+    // Columnas que llegan como número serial de Excel y deben formatearse.
+    const COLS_FECHA = ["fecha_inicio_cargo", "fecha_fin_proyectada"];
 
     // -------------------------------------------------------------
     // Inicialización de MSAL
@@ -230,6 +232,12 @@
     const tableWrap = $("tableWrap");
     const tableBody = $("tableBody");
     const rowCount = $("rowCount");
+    const searchInput = $("searchInput");
+    const lastUpdated = $("lastUpdated");
+
+    // Estado en memoria de los datos cargados (para filtrar sin re-llamar Graph).
+    let datosCargados = { idx: {}, filas: [] };
+    let ultimaCarga = null; // timestamp (ms) de la última carga exitosa
 
     // -------------------------------------------------------------
     // Arranque: MSAL v3 requiere initialize() antes de usarse.
@@ -287,63 +295,8 @@
 
     $("btnReload").addEventListener("click", cargarPersonas);
 
-    // -------------------------------------------------------------
-    // DIAGNÓSTICO TEMPORAL: listar carpetas/archivos en OneDrive
-    // (se quitará una vez verificada la ruta /Apps/PEP-Manager)
-    // -------------------------------------------------------------
-    const diagWrap = $("diagWrap");
-    const diagOutput = $("diagOutput");
-
-    $("btnDiagClose").addEventListener("click", () => diagWrap.classList.add("hidden"));
-
-    $("btnDiag").addEventListener("click", async () => {
-      diagWrap.classList.remove("hidden");
-      diagOutput.textContent = "Consultando Microsoft Graph…";
-      try {
-        const token = await obtenerToken();
-        const headers = { Authorization: "Bearer " + token };
-
-        // 1) Contenido de la raíz del OneDrive
-        const rootResp = await fetch(
-          GRAPH_BASE + "/me/drive/root/children?$select=name,folder",
-          { headers }
-        );
-        const rootData = rootResp.ok ? await rootResp.json() : await rootResp.json().catch(() => null);
-
-        // 2) Contenido de la carpeta /Apps (si existe)
-        const appsResp = await fetch(
-          GRAPH_BASE + "/me/drive/root:/Apps:/children",
-          { headers }
-        );
-        const appsData = appsResp.ok ? await appsResp.json() : await appsResp.json().catch(() => null);
-
-        // 3) Contenido de la carpeta /Apps/PEP-Manager (para ver el ID de database.xlsx)
-        const pepResp = await fetch(
-          GRAPH_BASE + "/me/drive/root:/Apps/PEP-Manager:/children",
-          { headers }
-        );
-        const pepData = pepResp.ok ? await pepResp.json() : await pepResp.json().catch(() => null);
-
-        // Resumen legible de nombres en la raíz
-        const nombresRaiz = (rootData && rootData.value)
-          ? rootData.value.map((it) => (it.folder ? "📁 " : "📄 ") + it.name)
-          : ["(sin datos)"];
-
-        const salida =
-          "=== RAÍZ DE ONEDRIVE (" + rootResp.status + ") ===\n" +
-          nombresRaiz.join("\n") + "\n\n" +
-          JSON.stringify(rootData, null, 2) + "\n\n" +
-          "=== CARPETA /Apps (" + appsResp.status + ") ===\n" +
-          JSON.stringify(appsData, null, 2) + "\n\n" +
-          "=== CONTENIDO DE /Apps/PEP-Manager (" + pepResp.status + ") ===\n" +
-          JSON.stringify(pepData, null, 2);
-
-        diagOutput.textContent = salida;
-      } catch (err) {
-        console.error("Error de diagnóstico:", err);
-        diagOutput.textContent = "Error: " + (err.message || err);
-      }
-    });
+    // Filtrado en vivo: re-renderiza la tabla con el texto del buscador.
+    searchInput.addEventListener("input", () => renderTabla(searchInput.value));
 
     // -------------------------------------------------------------
     // Cambios de vista
@@ -420,33 +373,19 @@
 
         loading.classList.add("hidden");
 
+        // Guardamos en memoria y registramos la hora de carga.
+        datosCargados = { idx, filas };
+        ultimaCarga = Date.now();
+        actualizarTimestamp();
+
         if (filas.length === 0) {
           emptyState.classList.remove("hidden");
           return;
         }
 
-        // Render de filas
-        tableBody.innerHTML = "";
-        filas.forEach((fila) => {
-          const valores = fila.values[0]; // cada fila trae un array dentro de values
-          const tr = document.createElement("tr");
-          tr.className = "even:bg-slate-50 hover:bg-blue-50/40 transition";
-
-          COLS_VISIBLES.forEach((nombreCol) => {
-            const td = document.createElement("td");
-            td.className = "px-4 py-2.5 whitespace-nowrap text-slate-700";
-            const i = idx[nombreCol];
-            const valor = (i !== undefined && valores[i] !== null && valores[i] !== "")
-              ? valores[i] : "—";
-            td.textContent = valor;
-            tr.appendChild(td);
-          });
-
-          tableBody.appendChild(tr);
-        });
-
+        // Renderizamos respetando el filtro actual del buscador.
+        renderTabla(searchInput.value);
         tableWrap.classList.remove("hidden");
-        rowCount.textContent = filas.length + " persona(s)";
         rowCount.classList.remove("hidden");
 
       } catch (err) {
@@ -456,6 +395,114 @@
         dataError.classList.remove("hidden");
       }
     }
+
+    // -------------------------------------------------------------
+    // Render de la tabla aplicando el filtro de búsqueda (en memoria)
+    // -------------------------------------------------------------
+    function renderTabla(filtro) {
+      const idx = datosCargados.idx;
+      const q = (filtro || "").trim().toLowerCase();
+
+      // Filtro case-insensitive contra persona_id y nombre_completo.
+      const filas = datosCargados.filas.filter((fila) => {
+        if (!q) return true;
+        const v = fila.values[0];
+        const id = String(v[idx["persona_id"]] ?? "").toLowerCase();
+        const nombre = String(v[idx["nombre_completo"]] ?? "").toLowerCase();
+        return id.includes(q) || nombre.includes(q);
+      });
+
+      tableBody.innerHTML = "";
+      filas.forEach((fila) => {
+        const valores = fila.values[0]; // cada fila trae un array dentro de values
+        const tr = document.createElement("tr");
+        tr.className = "even:bg-slate-50 hover:bg-blue-50/40 transition";
+
+        COLS_VISIBLES.forEach((nombreCol) => {
+          const td = document.createElement("td");
+          const i = idx[nombreCol];
+          let valor = (i !== undefined && valores[i] !== null && valores[i] !== "")
+            ? valores[i] : null;
+
+          // Columnas de fecha: convertir serial de Excel a dd/mm/aaaa.
+          if (COLS_FECHA.includes(nombreCol)) {
+            td.className = "px-4 py-2.5 whitespace-nowrap text-slate-700";
+            td.textContent = formatExcelDate(valor);
+          } else if (nombreCol === "estatus") {
+            // Estatus como badge de color según valor.
+            td.className = "px-4 py-2.5 whitespace-nowrap";
+            const span = document.createElement("span");
+            span.className = "inline-block px-2 py-0.5 rounded-full text-xs font-medium " + claseEstatus(valor);
+            span.textContent = valor != null ? valor : "—";
+            td.appendChild(span);
+          } else {
+            td.className = "px-4 py-2.5 whitespace-nowrap text-slate-700";
+            td.textContent = valor != null ? valor : "—";
+          }
+          tr.appendChild(td);
+        });
+
+        // Columna de acciones: icono "ver detalles" (prep. próximo sprint).
+        const tdAcc = document.createElement("td");
+        tdAcc.className = "px-4 py-2.5 whitespace-nowrap text-center";
+        const btnVer = document.createElement("button");
+        btnVer.className = "text-base hover:scale-110 transition";
+        btnVer.title = "Ver detalles";
+        btnVer.textContent = "👁️";
+        btnVer.addEventListener("click", () => {
+          // Construimos el objeto persona completo (todas las columnas).
+          const persona = {};
+          Object.keys(idx).forEach((col) => { persona[col] = valores[idx[col]]; });
+          console.log("Persona:", persona);
+        });
+        tdAcc.appendChild(btnVer);
+        tr.appendChild(tdAcc);
+
+        tableBody.appendChild(tr);
+      });
+
+      rowCount.textContent = filas.length + " persona(s)" +
+        (q ? " (filtradas de " + datosCargados.filas.length + ")" : "");
+    }
+
+    // Convierte un número serial de Excel a string dd/mm/aaaa.
+    function formatExcelDate(serial) {
+      if (!serial || isNaN(serial)) return "—";
+      // Excel cuenta días desde 1900-01-01, con el bug del año bisiesto de 1900.
+      const ms = (serial - 25569) * 86400 * 1000;
+      const date = new Date(ms);
+      const dd = String(date.getUTCDate()).padStart(2, "0");
+      const mm = String(date.getUTCMonth() + 1).padStart(2, "0");
+      const yyyy = date.getUTCFullYear();
+      return `${dd}/${mm}/${yyyy}`;
+    }
+
+    // Clases Tailwind para el badge de estatus según su valor.
+    function claseEstatus(valor) {
+      switch (valor) {
+        case "Activo":        return "bg-green-100 text-green-800";
+        case "Remanencia":    return "bg-yellow-100 text-yellow-800";
+        case "Histórico":     return "bg-slate-200 text-slate-700";
+        case "Por confirmar": return "bg-blue-100 text-blue-800";
+        default:              return "bg-slate-100 text-slate-600";
+      }
+    }
+
+    // Actualiza la etiqueta "Actualizado: hace X..." (relativa a ultimaCarga).
+    function actualizarTimestamp() {
+      if (!ultimaCarga) { lastUpdated.textContent = ""; return; }
+      const seg = Math.floor((Date.now() - ultimaCarga) / 1000);
+      let txt;
+      if (seg < 60) txt = "hace " + seg + " segundo" + (seg === 1 ? "" : "s");
+      else {
+        const min = Math.floor(seg / 60);
+        txt = "hace " + min + " minuto" + (min === 1 ? "" : "s");
+      }
+      lastUpdated.textContent = "· Actualizado: " + txt;
+    }
+
+    // Refrescamos la etiqueta de tiempo cada segundo.
+    setInterval(actualizarTimestamp, 1000);
 
     // Convierte una respuesta de error de Graph en un Error legible.
     async function graphError(resp) {
