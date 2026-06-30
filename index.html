@@ -1526,7 +1526,8 @@
       $("saveError").classList.add("hidden");
 
       const editando = estadoApp.personaEditando;
-      const valores = construirValores(persona, datosCargados.idx);
+      const valoresOriginales = editando ? editando.persona : null;
+      const valores = construirValores(persona, datosCargados.idx, valoresOriginales);
 
       mostrarOverlay(true, editando ? "Actualizando…" : "Guardando…");
       try {
@@ -1589,12 +1590,20 @@
     }
 
     // Construye el array de valores en el orden real de columnas (idx).
-    function construirValores(persona, idx) {
+    // valoresOriginales: fila previa (modo edición) o null (modo creación).
+    function construirValores(persona, idx, valoresOriginales) {
       const arr = new Array(Object.keys(idx).length).fill("");
       COLUMNAS_PERSONAS.forEach((col) => {
         const i = idx[col];
         if (i === undefined) return;
-        if (COLS_CALCULADAS.includes(col)) { arr[i] = ""; return; } // Excel recalcula
+        if (COLS_CALCULADAS.includes(col)) {
+          // Creación: fila nueva, no hay nada que preservar -> "" para que
+          // Excel la recalcule. Edición: NUNCA se toca esta columna; se
+          // reenvía tal cual el valor que ya tenía la fila, para no pisar
+          // con una cadena vacía lo que Excel ya había calculado.
+          arr[i] = valoresOriginales ? (valoresOriginales[col] ?? "") : "";
+          return;
+        }
         let v = persona[col];
         if (COLS_FECHA_ALL.includes(col)) {
           const s = dateToExcelSerial(v);
@@ -1606,10 +1615,10 @@
       return arr;
     }
 
-    // Para soft delete: parte de la fila existente y sólo cambia lo necesario.
+    // Para soft delete: parte de la fila existente (preserva todo, incluidas
+    // las columnas calculadas) y solo cambia tipo_pep + fecha_actualizacion.
     function valoresParaSoftDelete(rawValues, idx) {
       const arr = rawValues.slice();
-      COLS_CALCULADAS.forEach((col) => { if (idx[col] !== undefined) arr[idx[col]] = ""; });
       if (idx["tipo_pep"] !== undefined) arr[idx["tipo_pep"]] = "Eliminado";
       if (idx["fecha_actualizacion"] !== undefined) arr[idx["fecha_actualizacion"]] = dateToExcelSerial(hoyISO());
       return arr;
