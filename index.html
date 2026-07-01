@@ -1955,6 +1955,19 @@
       return GRAPH_BASE + "/me/drive/root:" + WORKBOOK_PATH + ":/workbook/tables/" + TABLE_LISTAS;
     }
 
+    // Normaliza un encabezado de columna para compararlo sin importar
+    // mayúsculas/minúsculas ni acentos. Estas tablas de configuración las
+    // captura una persona a mano en Excel, y "Nombre"/"nombre" o
+    // "actualización"/"actualizacion" deben tratarse como la misma
+    // columna — a diferencia de tbl_Personas/tbl_Cargos/tbl_Dependencias,
+    // que ya vienen de una plantilla fija y no han tenido este problema.
+    function normalizarCol(s) {
+      const combiningMarks = new RegExp("[\\u0300-\\u036f]", "g");
+      return String(s || "")
+        .normalize("NFD").replace(combiningMarks, "")
+        .trim().toLowerCase();
+    }
+
     // Carga CAT_Listas y dibuja una tarjeta por cada lista configurada.
     async function cargarListasConfig() {
       $("listasLoading").classList.remove("hidden");
@@ -1975,7 +1988,7 @@
         const colsData = await colsResp.json();
         const rowsData = await rowsResp.json();
         const idx = {};
-        (colsData.value || []).forEach((c) => { idx[c.name] = c.index; });
+        (colsData.value || []).forEach((c) => { idx[normalizarCol(c.name)] = c.index; });
 
         catListas = (rowsData.value || []).map((fila) => {
           const v = fila.values[0];
@@ -2191,7 +2204,7 @@
       if (!colsResp.ok) throw await graphError(colsResp, tabla);
       const colsData = await colsResp.json();
       const idx = {};
-      (colsData.value || []).forEach((c) => { idx[c.name] = c.index; });
+      (colsData.value || []).forEach((c) => { idx[normalizarCol(c.name)] = c.index; });
 
       const hoy = hoyISO();
       const filasValores = registros.map((reg) => {
@@ -2232,7 +2245,7 @@
       if (colsListasResp.ok) {
         const cd = await colsListasResp.json();
         const idxListas = {};
-        (cd.value || []).forEach((c) => { idxListas[c.name] = c.index; });
+        (cd.value || []).forEach((c) => { idxListas[normalizarCol(c.name)] = c.index; });
         const arrListas = new Array(Object.keys(idxListas).length).fill("");
         Object.keys(idxListas).forEach((col) => {
           arrListas[idxListas[col]] = (lista[col] !== undefined && lista[col] !== null) ? lista[col] : "";
@@ -2267,7 +2280,7 @@
         const colsData = await colsResp.json();
         const rowsData = await rowsResp.json();
         const idx = {};
-        (colsData.value || []).forEach((c) => { idx[c.name] = c.index; });
+        (colsData.value || []).forEach((c) => { idx[normalizarCol(c.name)] = c.index; });
 
         registrosListaActual = { listaId: lista.lista_id, idx, filas: rowsData.value || [] };
         $("registrosListaSub").textContent = "Tabla " + lista.tabla_destino;
