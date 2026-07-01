@@ -107,6 +107,10 @@
           class="text-sm font-medium px-4 py-2 rounded-lg transition">
           Catálogos
         </button>
+        <button type="button" id="tabListas"
+          class="text-sm font-medium px-4 py-2 rounded-lg transition">
+          Listas internacionales
+        </button>
       </nav>
 
       <!-- ===================== SECCIÓN PERSONAS ===================== -->
@@ -460,6 +464,73 @@
 
         </div>
       </div><!-- /seccionCatalogos -->
+
+      <!-- ===================== SECCIÓN LISTAS INTERNACIONALES ===================== -->
+      <div id="seccionListas" class="hidden">
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div class="px-5 py-4 border-b border-slate-200">
+            <h2 class="text-lg font-semibold text-slate-900">Listas internacionales de sanciones</h2>
+            <p class="text-xs text-slate-500">
+              Configuración en <code class="bg-slate-100 px-1 rounded">CAT_Listas</code> · OneDrive
+            </p>
+          </div>
+
+          <!-- Indicador de carga de la configuración -->
+          <div id="listasLoading" class="hidden p-12 flex flex-col items-center justify-center text-slate-500">
+            <svg class="animate-spin w-8 h-8 text-blue-600 mb-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+            </svg>
+            <span class="text-sm">Cargando configuración de listas…</span>
+          </div>
+
+          <!-- Mensaje de error de Graph -->
+          <div id="listasError" class="hidden p-6 m-5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm"></div>
+
+          <!-- Estado vacío: falta crear CAT_Listas o capturar filas -->
+          <div id="listasEmpty" class="hidden p-12 text-center text-slate-500 text-sm">
+            No hay listas configuradas todavía en <code class="bg-slate-100 px-1 rounded">CAT_Listas</code>.
+          </div>
+
+          <!-- Tarjetas, una por lista configurada -->
+          <div id="listasCards" class="hidden p-5 grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+        </div>
+
+        <!-- Registros de la lista seleccionada (aparece al pulsar "Ver registros") -->
+        <div id="registrosListaWrap" class="hidden mt-5 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div class="px-5 py-4 border-b border-slate-200 flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <h2 id="registrosListaTitulo" class="text-lg font-semibold text-slate-900">Registros</h2>
+              <p id="registrosListaSub" class="text-xs text-slate-500"></p>
+            </div>
+            <button type="button" id="btnCerrarRegistrosLista"
+              class="text-sm font-medium px-3 py-2 rounded-lg border border-slate-300 hover:bg-slate-100 transition shadow-sm">
+              Cerrar
+            </button>
+          </div>
+          <div class="px-5 py-3 border-b border-slate-100">
+            <input id="searchRegistrosLista" type="text" placeholder="Buscar por nombre, alias o ID…"
+              class="w-full sm:w-80 text-sm px-3 py-2 rounded-lg border border-slate-300
+                     focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
+          </div>
+          <div class="overflow-auto max-h-[60vh]">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="sticky top-0 z-10 bg-slate-100 text-left text-slate-700">
+                  <th class="px-4 py-3 font-semibold whitespace-nowrap">registro_id</th>
+                  <th class="px-4 py-3 font-semibold whitespace-nowrap">nombre_principal</th>
+                  <th class="px-4 py-3 font-semibold whitespace-nowrap">alias</th>
+                  <th class="px-4 py-3 font-semibold whitespace-nowrap">tipo_sujeto</th>
+                  <th class="px-4 py-3 font-semibold whitespace-nowrap">nacionalidad</th>
+                  <th class="px-4 py-3 font-semibold whitespace-nowrap">programa_motivo</th>
+                </tr>
+              </thead>
+              <tbody id="tbodyRegistrosLista" class="divide-y divide-slate-100"></tbody>
+            </table>
+          </div>
+          <div id="rowCountRegistrosLista" class="px-5 py-3 text-xs text-slate-400 border-t border-slate-100"></div>
+        </div>
+      </div><!-- /seccionListas -->
     </section>
 
   </main>
@@ -530,6 +601,35 @@
     // Catálogos auxiliares (named tables).
     const TABLE_CARGOS = "tbl_Cargos";
     const TABLE_DEPENDENCIAS = "tbl_Dependencias";
+
+    // =============================================================
+    // LISTAS INTERNACIONALES (OFAC / ONU / UE / futuras)
+    // =============================================================
+    // Tabla de configuración: una fila por lista, con la URL de la fuente,
+    // el nombre de la tabla destino y si está activa. Agregar una lista
+    // nueva = agregar una fila aquí + un adaptador en ADAPTADORES_LISTAS.
+    const TABLE_LISTAS = "CAT_Listas";
+
+    // Esquema común de toda tabla destino de una lista internacional
+    // (single source of truth para el orden de columnas al escribir,
+    // igual que COLUMNAS_PERSONAS). Las fechas se guardan como texto
+    // "YYYY-MM-DD" o texto libre (p. ej. "circa 1965"), NUNCA como
+    // serial de Excel: los datos de sanciones traen fechas aproximadas
+    // o múltiples, que no siempre son fechas válidas de calendario.
+    const COLUMNAS_LISTA = [
+      "registro_id", "lista_origen", "tipo_sujeto", "nombre_principal",
+      "alias", "nacionalidad", "fecha_nacimiento", "id_original",
+      "programa_motivo", "fecha_fuente", "fecha_captura", "estatus", "notas",
+    ];
+
+    // Registro de adaptadores: cada uno convierte el texto crudo de una
+    // fuente externa (XML/CSV) en un arreglo de objetos con el esquema
+    // COLUMNAS_LISTA. Para agregar una lista nueva con un formato ya
+    // soportado, solo hace falta una fila en CAT_Listas; si el formato
+    // es nuevo, se agrega aquí una función más.
+    const ADAPTADORES_LISTAS = {
+      OFAC_SDN: parseOFAC_SDN,
+    };
 
     // SINGLE SOURCE OF TRUTH: orden lógico de columnas de tbl_Personas.
     // (El orden real al escribir se resuelve con el índice devuelto por
@@ -625,12 +725,17 @@
 
     // Estado global de navegación (sin router; mostramos/ocultamos divs).
     let estadoApp = {
-      seccionActual: "personas",   // "personas" | "catalogos"
+      seccionActual: "personas",   // "personas" | "catalogos" | "listas"
       vistaActual: "lista",        // dentro de "personas": "lista" | "detalle"
       catalogoTab: "dependencias", // dentro de "catalogos": "dependencias" | "cargos"
       personaEditando: null,
       dirty: false,
     };
+
+    // Configuración de listas internacionales (filas de CAT_Listas) y los
+    // registros de la lista que se esté visualizando en ese momento.
+    let catListas = [];
+    let registrosListaActual = { listaId: null, idx: {}, filas: [] };
 
     // Catálogos cargados desde Excel (arrays de objetos por nombre de columna).
     let catCargos = [];
@@ -728,9 +833,10 @@
       }
     });
 
-    // Pestañas principales: Personas / Catálogos.
+    // Pestañas principales: Personas / Catálogos / Listas internacionales.
     $("tabPersonas").addEventListener("click", () => mostrarSeccion("personas"));
     $("tabCatalogos").addEventListener("click", () => mostrarSeccion("catalogos"));
+    $("tabListas").addEventListener("click", () => mostrarSeccion("listas"));
 
     // Sub-pestañas dentro de Catálogos: Dependencias / Cargos.
     $("subtabDependencias").addEventListener("click", () => mostrarCatalogoTab("dependencias"));
@@ -739,6 +845,12 @@
     // Búsqueda en vivo dentro de cada tabla de catálogo.
     $("searchDependencias").addEventListener("input", (e) => renderCatalogoDependencias(e.target.value));
     $("searchCargos").addEventListener("input", (e) => renderCatalogoCargos(e.target.value));
+
+    // Listas internacionales: cerrar panel de registros y buscar en vivo.
+    $("btnCerrarRegistrosLista").addEventListener("click", () => {
+      $("registrosListaWrap").classList.add("hidden");
+    });
+    $("searchRegistrosLista").addEventListener("input", (e) => renderRegistrosLista(e.target.value));
 
     // -------------------------------------------------------------
     // Cambios de vista
@@ -770,9 +882,11 @@
       estadoApp.seccionActual = nombre;
       $("seccionPersonas").classList.toggle("hidden", nombre !== "personas");
       $("seccionCatalogos").classList.toggle("hidden", nombre !== "catalogos");
+      $("seccionListas").classList.toggle("hidden", nombre !== "listas");
 
       estilizarTab($("tabPersonas"), nombre === "personas");
       estilizarTab($("tabCatalogos"), nombre === "catalogos");
+      estilizarTab($("tabListas"), nombre === "listas");
 
       if (nombre === "catalogos") {
         if (catCargos.length === 0 || catDeps.length === 0) {
@@ -780,6 +894,9 @@
         } else {
           mostrarCatalogoTab(estadoApp.catalogoTab);
         }
+      }
+      if (nombre === "listas") {
+        cargarListasConfig();
       }
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
@@ -1825,6 +1942,436 @@
       emptyState.classList.add("hidden");
       tableWrap.classList.add("hidden");
       rowCount.classList.add("hidden");
+    }
+
+    // =============================================================
+    // LISTAS INTERNACIONALES: configuración (CAT_Listas), fetch con
+    // respaldo de subida manual, escritura en bloques y visualización.
+    // =============================================================
+    function wbListas() {
+      return GRAPH_BASE + "/me/drive/root:" + WORKBOOK_PATH + ":/workbook/tables/" + TABLE_LISTAS;
+    }
+
+    // Carga CAT_Listas y dibuja una tarjeta por cada lista configurada.
+    async function cargarListasConfig() {
+      $("listasLoading").classList.remove("hidden");
+      $("listasError").classList.add("hidden");
+      $("listasEmpty").classList.add("hidden");
+      $("listasCards").classList.add("hidden");
+
+      try {
+        const token = await obtenerToken();
+        const headers = { Authorization: "Bearer " + token };
+        const [colsResp, rowsResp] = await Promise.all([
+          fetch(wbListas() + "/columns", { headers }),
+          fetch(wbListas() + "/rows", { headers }),
+        ]);
+        if (!colsResp.ok) throw await graphError(colsResp);
+        if (!rowsResp.ok) throw await graphError(rowsResp);
+
+        const colsData = await colsResp.json();
+        const rowsData = await rowsResp.json();
+        const idx = {};
+        (colsData.value || []).forEach((c) => { idx[c.name] = c.index; });
+
+        catListas = (rowsData.value || []).map((fila) => {
+          const v = fila.values[0];
+          const o = { _index: fila.index };
+          Object.keys(idx).forEach((name) => { o[name] = v[idx[name]]; });
+          return o;
+        });
+
+        $("listasLoading").classList.add("hidden");
+
+        if (catListas.length === 0) {
+          $("listasEmpty").classList.remove("hidden");
+          return;
+        }
+        renderListasCards();
+        $("listasCards").classList.remove("hidden");
+      } catch (err) {
+        console.error("Error al cargar CAT_Listas:", err);
+        $("listasLoading").classList.add("hidden");
+        $("listasError").textContent = "Error al leer la configuración de listas: " + (err.message || err);
+        $("listasError").classList.remove("hidden");
+      }
+    }
+
+    function renderListasCards() {
+      const cont = $("listasCards");
+      cont.innerHTML = "";
+
+      catListas.forEach((lista) => {
+        const activa = String(lista.activa).toLowerCase() === "true" || lista.activa === true;
+        const tieneAdaptador = !!ADAPTADORES_LISTAS[lista.lista_id];
+
+        const card = document.createElement("div");
+        card.className = "sec bg-white";
+
+        const encabezado = document.createElement("div");
+        encabezado.className = "flex items-start justify-between gap-2 mb-2";
+
+        const info = document.createElement("div");
+        const h3 = document.createElement("h3");
+        h3.className = "font-semibold text-slate-900";
+        h3.textContent = lista.nombre || lista.lista_id || "(sin nombre)";
+        const pInfo = document.createElement("p");
+        pInfo.className = "text-xs text-slate-500";
+        pInfo.textContent = (lista.categoria || "") + " · " + (lista.tabla_destino || "");
+        info.appendChild(h3);
+        info.appendChild(pInfo);
+
+        const badge = document.createElement("span");
+        badge.className = "inline-block px-2 py-0.5 rounded-full text-xs font-medium shrink-0 " +
+          (activa ? "bg-green-100 text-green-800" : "bg-slate-200 text-slate-600");
+        badge.textContent = activa ? "Activa" : "Inactiva";
+
+        encabezado.appendChild(info);
+        encabezado.appendChild(badge);
+        card.appendChild(encabezado);
+
+        const meta = document.createElement("p");
+        meta.className = "text-xs text-slate-500 mb-3";
+        meta.textContent = "Actualizado: " + (lista.fecha_ultima_actualizacion || "nunca") +
+          " · " + (lista.total_registros || 0) + " registro(s)";
+        card.appendChild(meta);
+
+        // Línea de estatus (se declara antes de los botones para que sus
+        // closures ya la tengan disponible al hacer clic).
+        const statusEl = document.createElement("p");
+        statusEl.className = "text-xs mt-2 text-slate-500";
+
+        const acciones = document.createElement("div");
+        acciones.className = "flex items-center gap-2 flex-wrap";
+
+        const btnActualizar = document.createElement("button");
+        btnActualizar.type = "button";
+        btnActualizar.className = "text-xs font-medium px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition shadow-sm disabled:opacity-50 disabled:cursor-not-allowed";
+        btnActualizar.textContent = "Actualizar ahora";
+        btnActualizar.disabled = !activa;
+        btnActualizar.addEventListener("click", () => actualizarLista(lista, statusEl));
+
+        const labelSubir = document.createElement("label");
+        labelSubir.className = "text-xs font-medium px-2.5 py-1.5 rounded-lg border border-slate-300 hover:bg-slate-100 transition shadow-sm cursor-pointer";
+        labelSubir.textContent = "Subir archivo manualmente";
+        const inputSubir = document.createElement("input");
+        inputSubir.type = "file";
+        inputSubir.accept = ".xml,.csv,.json,text/xml,text/csv,application/json";
+        inputSubir.className = "hidden";
+        inputSubir.addEventListener("change", (e) => {
+          const file = e.target.files[0];
+          e.target.value = "";
+          if (file) subirArchivoLista(lista, file, statusEl);
+        });
+        labelSubir.appendChild(inputSubir);
+
+        const btnVer = document.createElement("button");
+        btnVer.type = "button";
+        btnVer.className = "text-xs font-medium px-2.5 py-1.5 rounded-lg border border-slate-300 hover:bg-slate-100 transition shadow-sm";
+        btnVer.textContent = "Ver registros";
+        btnVer.addEventListener("click", () => verRegistrosLista(lista));
+
+        acciones.appendChild(btnActualizar);
+        acciones.appendChild(labelSubir);
+        acciones.appendChild(btnVer);
+        card.appendChild(acciones);
+
+        if (!tieneAdaptador) {
+          statusEl.textContent = "Sin adaptador de formato todavía: esta lista es solo de referencia.";
+        }
+        card.appendChild(statusEl);
+
+        cont.appendChild(card);
+      });
+    }
+
+    // Intenta descargar automáticamente la fuente de una lista. La mayoría
+    // de estas fuentes (OFAC/ONU/UE) están pensadas para descarga directa,
+    // no para fetch() desde un origen distinto, así que si el navegador lo
+    // bloquea (CORS), se ofrece la subida manual como respaldo.
+    async function actualizarLista(lista, statusEl) {
+      const adaptador = ADAPTADORES_LISTAS[lista.lista_id];
+      if (!adaptador) {
+        statusEl.textContent = "No hay un adaptador de formato registrado para esta lista.";
+        statusEl.className = "text-xs mt-2 text-red-600";
+        return;
+      }
+      if (!lista.url_fuente) {
+        statusEl.textContent = "Esta lista no tiene url_fuente configurada en CAT_Listas.";
+        statusEl.className = "text-xs mt-2 text-red-600";
+        return;
+      }
+
+      statusEl.textContent = "Descargando desde la fuente…";
+      statusEl.className = "text-xs mt-2 text-slate-500";
+      try {
+        const resp = await fetch(lista.url_fuente);
+        if (!resp.ok) throw new Error("La fuente respondió " + resp.status + " " + resp.statusText);
+        const texto = await resp.text();
+        await procesarYEscribirLista(lista, texto, adaptador, statusEl);
+      } catch (err) {
+        console.warn("Fetch automático falló para " + lista.lista_id + ":", err);
+        statusEl.className = "text-xs mt-2 text-amber-700";
+        statusEl.textContent = "No se pudo descargar automáticamente (posible bloqueo CORS del origen). " +
+          "Descarga el archivo manualmente desde la URL configurada y súbelo con \"Subir archivo manualmente\".";
+      }
+    }
+
+    // Respaldo cuando el fetch directo falla: procesa un archivo que el
+    // usuario descargó a mano y lo sube con el mismo input de la tarjeta.
+    async function subirArchivoLista(lista, file, statusEl) {
+      const adaptador = ADAPTADORES_LISTAS[lista.lista_id];
+      if (!adaptador) {
+        statusEl.textContent = "No hay un adaptador de formato registrado para esta lista.";
+        statusEl.className = "text-xs mt-2 text-red-600";
+        return;
+      }
+      statusEl.textContent = "Leyendo archivo…";
+      statusEl.className = "text-xs mt-2 text-slate-500";
+      try {
+        const texto = await file.text();
+        await procesarYEscribirLista(lista, texto, adaptador, statusEl);
+      } catch (err) {
+        console.error("Error al procesar archivo subido:", err);
+        statusEl.textContent = "Error al leer el archivo: " + (err.message || err);
+        statusEl.className = "text-xs mt-2 text-red-600";
+      }
+    }
+
+    // Corre el adaptador sobre el texto crudo (de fetch o de archivo
+    // subido) y escribe los registros resultantes en la tabla destino.
+    async function procesarYEscribirLista(lista, textoCrudo, adaptador, statusEl) {
+      statusEl.textContent = "Interpretando datos…";
+      statusEl.className = "text-xs mt-2 text-slate-500";
+      let registros;
+      try {
+        registros = adaptador(textoCrudo);
+      } catch (err) {
+        statusEl.textContent = "Error al interpretar el archivo: " + (err.message || err);
+        statusEl.className = "text-xs mt-2 text-red-600";
+        return;
+      }
+      if (!registros || registros.length === 0) {
+        statusEl.textContent = "El archivo se leyó pero no se encontraron registros.";
+        statusEl.className = "text-xs mt-2 text-amber-700";
+        return;
+      }
+
+      try {
+        await escribirRegistrosLista(lista, registros);
+        mostrarOverlay(false);
+        statusEl.textContent = "Actualizado correctamente: " + registros.length + " registro(s).";
+        statusEl.className = "text-xs mt-2 text-green-700";
+        mostrarToast((lista.nombre || lista.lista_id) + " actualizada (" + registros.length + " registros)", "ok");
+        await cargarListasConfig();
+      } catch (err) {
+        mostrarOverlay(false);
+        console.error("Error al escribir en " + lista.tabla_destino + ":", err);
+        statusEl.textContent = "Error al guardar en Excel: " + (err.message || err);
+        statusEl.className = "text-xs mt-2 text-red-600";
+      }
+    }
+
+    // Reemplaza por completo el contenido de la tabla destino: vacía las
+    // filas existentes (dataBodyRange/clear) y escribe el arreglo nuevo en
+    // bloques (listas como OFAC SDN traen miles de entradas; una sola
+    // llamada con todo podría exceder límites de tamaño de Graph). Al
+    // final sella fecha_ultima_actualizacion y total_registros en
+    // CAT_Listas.
+    async function escribirRegistrosLista(lista, registros) {
+      const token = await obtenerToken();
+      const headers = { Authorization: "Bearer " + token, "Content-Type": "application/json" };
+      const tabla = lista.tabla_destino;
+      const wbTabla = GRAPH_BASE + "/me/drive/root:" + WORKBOOK_PATH + ":/workbook/tables/" + tabla;
+
+      const colsResp = await fetch(wbTabla + "/columns", { headers });
+      if (!colsResp.ok) throw await graphError(colsResp);
+      const colsData = await colsResp.json();
+      const idx = {};
+      (colsData.value || []).forEach((c) => { idx[c.name] = c.index; });
+
+      const hoy = hoyISO();
+      const filasValores = registros.map((reg) => {
+        const arr = new Array(Object.keys(idx).length).fill("");
+        COLUMNAS_LISTA.forEach((col) => {
+          const i = idx[col];
+          if (i === undefined) return;
+          if (col === "fecha_captura") { arr[i] = hoy; return; }
+          if (col === "fecha_fuente") { arr[i] = reg.fecha_fuente || hoy; return; }
+          if (col === "estatus") { arr[i] = reg.estatus || "Activo"; return; }
+          if (col === "lista_origen") { arr[i] = reg.lista_origen || lista.lista_id; return; }
+          const v = reg[col];
+          arr[i] = (v === undefined || v === null) ? "" : v;
+        });
+        return arr;
+      });
+
+      mostrarOverlay(true, "Vaciando " + tabla + "…");
+      const clearResp = await fetch(wbTabla + "/dataBodyRange/clear", {
+        method: "POST", headers, body: JSON.stringify({ applyTo: "Contents" }),
+      });
+      if (!clearResp.ok) throw await graphError(clearResp);
+
+      const TAMANO_BLOQUE = 500;
+      const totalBloques = Math.ceil(filasValores.length / TAMANO_BLOQUE);
+      for (let i = 0; i < filasValores.length; i += TAMANO_BLOQUE) {
+        const bloqueNum = Math.floor(i / TAMANO_BLOQUE) + 1;
+        mostrarOverlay(true, "Escribiendo bloque " + bloqueNum + " de " + totalBloques + "…");
+        const bloque = filasValores.slice(i, i + TAMANO_BLOQUE);
+        const addResp = await fetch(wbTabla + "/rows/add", {
+          method: "POST", headers, body: JSON.stringify({ values: bloque }),
+        });
+        if (!addResp.ok) throw await graphError(addResp);
+      }
+
+      // Sellar fecha_ultima_actualizacion y total_registros en CAT_Listas.
+      const colsListasResp = await fetch(wbListas() + "/columns", { headers });
+      if (colsListasResp.ok) {
+        const cd = await colsListasResp.json();
+        const idxListas = {};
+        (cd.value || []).forEach((c) => { idxListas[c.name] = c.index; });
+        const arrListas = new Array(Object.keys(idxListas).length).fill("");
+        Object.keys(idxListas).forEach((col) => {
+          arrListas[idxListas[col]] = (lista[col] !== undefined && lista[col] !== null) ? lista[col] : "";
+        });
+        if (idxListas["fecha_ultima_actualizacion"] !== undefined) arrListas[idxListas["fecha_ultima_actualizacion"]] = hoy;
+        if (idxListas["total_registros"] !== undefined) arrListas[idxListas["total_registros"]] = registros.length;
+        await fetch(wbListas() + "/rows/itemAt(index=" + lista._index + ")", {
+          method: "PATCH", headers, body: JSON.stringify({ values: [arrListas] }),
+        });
+      }
+    }
+
+    // Carga y muestra los registros ya guardados de la tabla destino de
+    // una lista (solo lectura, con búsqueda en vivo).
+    async function verRegistrosLista(lista) {
+      $("registrosListaWrap").classList.remove("hidden");
+      $("registrosListaTitulo").textContent = lista.nombre || lista.lista_id;
+      $("registrosListaSub").textContent = "Tabla " + lista.tabla_destino + " · cargando…";
+      $("tbodyRegistrosLista").innerHTML = "";
+      $("searchRegistrosLista").value = "";
+
+      try {
+        const token = await obtenerToken();
+        const headers = { Authorization: "Bearer " + token };
+        const wbTabla = GRAPH_BASE + "/me/drive/root:" + WORKBOOK_PATH + ":/workbook/tables/" + lista.tabla_destino;
+        const [colsResp, rowsResp] = await Promise.all([
+          fetch(wbTabla + "/columns", { headers }),
+          fetch(wbTabla + "/rows", { headers }),
+        ]);
+        if (!colsResp.ok) throw await graphError(colsResp);
+        if (!rowsResp.ok) throw await graphError(rowsResp);
+        const colsData = await colsResp.json();
+        const rowsData = await rowsResp.json();
+        const idx = {};
+        (colsData.value || []).forEach((c) => { idx[c.name] = c.index; });
+
+        registrosListaActual = { listaId: lista.lista_id, idx, filas: rowsData.value || [] };
+        $("registrosListaSub").textContent = "Tabla " + lista.tabla_destino;
+        renderRegistrosLista("");
+        $("registrosListaWrap").scrollIntoView({ behavior: "smooth", block: "start" });
+      } catch (err) {
+        console.error("Error al leer registros de " + lista.tabla_destino + ":", err);
+        $("registrosListaSub").textContent = "Error: " + (err.message || err);
+      }
+    }
+
+    // Filtro en vivo por nombre, alias, id_original o registro_id.
+    function renderRegistrosLista(filtro) {
+      const idx = registrosListaActual.idx;
+      const q = (filtro || "").trim().toLowerCase();
+      const camposBusqueda = ["registro_id", "nombre_principal", "alias", "id_original"];
+
+      const filas = registrosListaActual.filas.filter((fila) => {
+        if (!q) return true;
+        const v = fila.values[0];
+        return camposBusqueda.some((c) => idx[c] !== undefined &&
+          String(v[idx[c]] ?? "").toLowerCase().includes(q));
+      });
+
+      const tbody = $("tbodyRegistrosLista");
+      tbody.innerHTML = "";
+      const colsVisibles = ["registro_id", "nombre_principal", "alias", "tipo_sujeto", "nacionalidad", "programa_motivo"];
+      filas.forEach((fila) => {
+        const v = fila.values[0];
+        const tr = document.createElement("tr");
+        tr.className = "even:bg-slate-50 hover:bg-blue-50/40 transition";
+        colsVisibles.forEach((col) => {
+          const td = document.createElement("td");
+          td.className = "px-4 py-2.5 text-slate-700 " + (col === "alias" ? "max-w-xs truncate" : "whitespace-nowrap");
+          const i = idx[col];
+          const valor = (i !== undefined && v[i] !== null && v[i] !== "") ? v[i] : "—";
+          td.textContent = valor;
+          if (col === "alias" && valor !== "—") td.title = valor;
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+
+      $("rowCountRegistrosLista").textContent = filas.length + " registro(s)" +
+        (q ? " (filtrados de " + registrosListaActual.filas.length + ")" : "");
+    }
+
+    // ---- Adaptador: XML de la lista SDN de OFAC (Tesoro de EE.UU.) ----
+    // Esquema documentado públicamente: raíz <sdnList>, una entrada
+    // <sdnEntry> por persona/entidad. No se pudo verificar contra el
+    // archivo real en esta sesión (pesa >10MB). Si el primer intento
+    // real devuelve 0 registros, el esquema cambió y hay que ajustar los
+    // nombres de tag de esta función.
+    function parseOFAC_SDN(xmlText) {
+      const doc = new DOMParser().parseFromString(xmlText, "application/xml");
+      if (doc.getElementsByTagName("parsererror").length > 0) {
+        throw new Error("El XML de OFAC no se pudo interpretar (formato inesperado).");
+      }
+
+      const entradas = Array.from(doc.getElementsByTagName("sdnEntry"));
+      if (entradas.length === 0) {
+        throw new Error("No se encontraron entradas <sdnEntry> en el XML. El esquema de OFAC pudo haber cambiado.");
+      }
+
+      const texto = (el, tag) => {
+        const n = el.getElementsByTagName(tag)[0];
+        return n ? n.textContent.trim() : "";
+      };
+      // getElementsByTagName (no querySelectorAll) porque el XML de OFAC
+      // suele declarar un namespace por defecto, y los selectores CSS no
+      // siempre casan tags sin prefijo contra XML con namespace.
+      const listaDe = (el, contenedorTag, hijoTag) => {
+        const cont = el.getElementsByTagName(contenedorTag)[0];
+        return cont ? Array.from(cont.getElementsByTagName(hijoTag)) : [];
+      };
+
+      return entradas.map((entry) => {
+        const uid = texto(entry, "uid");
+
+        const alias = listaDe(entry, "akaList", "aka")
+          .map((aka) => [texto(aka, "firstName"), texto(aka, "lastName")].filter(Boolean).join(" "))
+          .filter(Boolean).join("; ");
+
+        const programas = listaDe(entry, "programList", "program")
+          .map((n) => n.textContent.trim()).filter(Boolean).join("; ");
+
+        const nacionalidades = listaDe(entry, "nationalityList", "nationality")
+          .map((n) => texto(n, "country")).filter(Boolean).join("; ");
+
+        const fechasNacimiento = listaDe(entry, "dateOfBirthList", "dateOfBirthItem")
+          .map((n) => texto(n, "dateOfBirth")).filter(Boolean).join("; ");
+
+        const nombre = [texto(entry, "firstName"), texto(entry, "lastName")].filter(Boolean).join(" ");
+
+        return {
+          registro_id: "OFAC-" + uid,
+          lista_origen: "OFAC_SDN",
+          tipo_sujeto: texto(entry, "sdnType") || "Desconocido",
+          nombre_principal: nombre || "(sin nombre)",
+          alias: alias,
+          nacionalidad: nacionalidades,
+          fecha_nacimiento: fechasNacimiento,
+          id_original: uid,
+          programa_motivo: programas,
+          notas: texto(entry, "remarks"),
+        };
+      });
     }
   </script>
 </body>
