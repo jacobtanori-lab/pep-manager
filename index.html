@@ -964,8 +964,8 @@
           fetch(wb + "/rows", { headers }),
         ]);
 
-        if (!colsResp.ok) throw await graphError(colsResp);
-        if (!rowsResp.ok) throw await graphError(rowsResp);
+        if (!colsResp.ok) throw await graphError(colsResp, TABLE_PERSONAS);
+        if (!rowsResp.ok) throw await graphError(rowsResp, TABLE_PERSONAS);
 
         const colsData = await colsResp.json();
         const rowsData = await rowsResp.json();
@@ -1921,7 +1921,9 @@
     }
 
     // Convierte una respuesta de error de Graph en un Error legible.
-    async function graphError(resp) {
+    // nombreTabla identifica la tabla que realmente se estaba consultando,
+    // para que el mensaje de 404 no siempre culpe a tbl_Personas.
+    async function graphError(resp, nombreTabla) {
       let detalle = resp.status + " " + resp.statusText;
       try {
         const j = await resp.json();
@@ -1930,7 +1932,8 @@
 
       if (resp.status === 404) {
         detalle = "No se encontró el archivo o la tabla. Verifica que exista " +
-          WORKBOOK_PATH + " con la tabla " + TABLE_PERSONAS + ". (" + detalle + ")";
+          WORKBOOK_PATH + " con la tabla " + (nombreTabla || TABLE_PERSONAS) +
+          " (debe ser una Tabla de Excel real, no solo una hoja con encabezados). (" + detalle + ")";
       }
       return new Error(detalle);
     }
@@ -1966,8 +1969,8 @@
           fetch(wbListas() + "/columns", { headers }),
           fetch(wbListas() + "/rows", { headers }),
         ]);
-        if (!colsResp.ok) throw await graphError(colsResp);
-        if (!rowsResp.ok) throw await graphError(rowsResp);
+        if (!colsResp.ok) throw await graphError(colsResp, TABLE_LISTAS);
+        if (!rowsResp.ok) throw await graphError(rowsResp, TABLE_LISTAS);
 
         const colsData = await colsResp.json();
         const rowsData = await rowsResp.json();
@@ -2185,7 +2188,7 @@
       const wbTabla = GRAPH_BASE + "/me/drive/root:" + WORKBOOK_PATH + ":/workbook/tables/" + tabla;
 
       const colsResp = await fetch(wbTabla + "/columns", { headers });
-      if (!colsResp.ok) throw await graphError(colsResp);
+      if (!colsResp.ok) throw await graphError(colsResp, tabla);
       const colsData = await colsResp.json();
       const idx = {};
       (colsData.value || []).forEach((c) => { idx[c.name] = c.index; });
@@ -2210,7 +2213,7 @@
       const clearResp = await fetch(wbTabla + "/dataBodyRange/clear", {
         method: "POST", headers, body: JSON.stringify({ applyTo: "Contents" }),
       });
-      if (!clearResp.ok) throw await graphError(clearResp);
+      if (!clearResp.ok) throw await graphError(clearResp, tabla);
 
       const TAMANO_BLOQUE = 500;
       const totalBloques = Math.ceil(filasValores.length / TAMANO_BLOQUE);
@@ -2221,7 +2224,7 @@
         const addResp = await fetch(wbTabla + "/rows/add", {
           method: "POST", headers, body: JSON.stringify({ values: bloque }),
         });
-        if (!addResp.ok) throw await graphError(addResp);
+        if (!addResp.ok) throw await graphError(addResp, tabla);
       }
 
       // Sellar fecha_ultima_actualizacion y total_registros en CAT_Listas.
@@ -2259,8 +2262,8 @@
           fetch(wbTabla + "/columns", { headers }),
           fetch(wbTabla + "/rows", { headers }),
         ]);
-        if (!colsResp.ok) throw await graphError(colsResp);
-        if (!rowsResp.ok) throw await graphError(rowsResp);
+        if (!colsResp.ok) throw await graphError(colsResp, lista.tabla_destino);
+        if (!rowsResp.ok) throw await graphError(rowsResp, lista.tabla_destino);
         const colsData = await colsResp.json();
         const rowsData = await rowsResp.json();
         const idx = {};
