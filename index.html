@@ -471,7 +471,8 @@
           <div class="px-5 py-4 border-b border-slate-200">
             <h2 class="text-lg font-semibold text-slate-900">Listas internacionales de sanciones</h2>
             <p class="text-xs text-slate-500">
-              Configuración en <code class="bg-slate-100 px-1 rounded">CAT_Listas</code> · OneDrive
+              Configuración en <code class="bg-slate-100 px-1 rounded">CAT_Listas</code> ·
+              archivo separado <code class="bg-slate-100 px-1 rounded">listas_internacionales.xlsx</code>
             </p>
           </div>
 
@@ -582,6 +583,12 @@
     const WORKBOOK_PATH = "/Apps/PEP-Manager/database.xlsx";
     const TABLE_PERSONAS = "tbl_Personas";
     const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
+
+    // Archivo separado para listas internacionales (CAT_Listas + tablas de
+    // sanciones tipo tbl_OFAC_SDN). Va aparte de database.xlsx a propósito:
+    // OFAC por sí solo puede traer miles de filas, y no queremos que un
+    // import masivo infle o ponga en riesgo el archivo de Personas.
+    const WORKBOOK_LISTAS_PATH = "/Apps/PEP-Manager/listas_internacionales.xlsx";
 
     // Columnas que mostraremos (en orden) — se mapean por nombre,
     // así que el orden real de la tabla en Excel no importa.
@@ -1922,8 +1929,9 @@
 
     // Convierte una respuesta de error de Graph en un Error legible.
     // nombreTabla identifica la tabla que realmente se estaba consultando,
-    // para que el mensaje de 404 no siempre culpe a tbl_Personas.
-    async function graphError(resp, nombreTabla) {
+    // para que el mensaje de 404 no siempre culpe a tbl_Personas ni a
+    // database.xlsx (las listas internacionales viven en otro archivo).
+    async function graphError(resp, nombreTabla, rutaArchivo) {
       let detalle = resp.status + " " + resp.statusText;
       try {
         const j = await resp.json();
@@ -1932,7 +1940,7 @@
 
       if (resp.status === 404) {
         detalle = "No se encontró el archivo o la tabla. Verifica que exista " +
-          WORKBOOK_PATH + " con la tabla " + (nombreTabla || TABLE_PERSONAS) +
+          (rutaArchivo || WORKBOOK_PATH) + " con la tabla " + (nombreTabla || TABLE_PERSONAS) +
           " (debe ser una Tabla de Excel real, no solo una hoja con encabezados). (" + detalle + ")";
       }
       return new Error(detalle);
@@ -1952,7 +1960,7 @@
     // respaldo de subida manual, escritura en bloques y visualización.
     // =============================================================
     function wbListas() {
-      return GRAPH_BASE + "/me/drive/root:" + WORKBOOK_PATH + ":/workbook/tables/" + TABLE_LISTAS;
+      return GRAPH_BASE + "/me/drive/root:" + WORKBOOK_LISTAS_PATH + ":/workbook/tables/" + TABLE_LISTAS;
     }
 
     // Normaliza un encabezado de columna para compararlo sin importar
@@ -1982,8 +1990,8 @@
           fetch(wbListas() + "/columns", { headers }),
           fetch(wbListas() + "/rows", { headers }),
         ]);
-        if (!colsResp.ok) throw await graphError(colsResp, TABLE_LISTAS);
-        if (!rowsResp.ok) throw await graphError(rowsResp, TABLE_LISTAS);
+        if (!colsResp.ok) throw await graphError(colsResp, TABLE_LISTAS, WORKBOOK_LISTAS_PATH);
+        if (!rowsResp.ok) throw await graphError(rowsResp, TABLE_LISTAS, WORKBOOK_LISTAS_PATH);
 
         const colsData = await colsResp.json();
         const rowsData = await rowsResp.json();
@@ -2198,10 +2206,10 @@
       const token = await obtenerToken();
       const headers = { Authorization: "Bearer " + token, "Content-Type": "application/json" };
       const tabla = lista.tabla_destino;
-      const wbTabla = GRAPH_BASE + "/me/drive/root:" + WORKBOOK_PATH + ":/workbook/tables/" + tabla;
+      const wbTabla = GRAPH_BASE + "/me/drive/root:" + WORKBOOK_LISTAS_PATH + ":/workbook/tables/" + tabla;
 
       const colsResp = await fetch(wbTabla + "/columns", { headers });
-      if (!colsResp.ok) throw await graphError(colsResp, tabla);
+      if (!colsResp.ok) throw await graphError(colsResp, tabla, WORKBOOK_LISTAS_PATH);
       const colsData = await colsResp.json();
       const idx = {};
       (colsData.value || []).forEach((c) => { idx[normalizarCol(c.name)] = c.index; });
@@ -2226,7 +2234,7 @@
       const clearResp = await fetch(wbTabla + "/dataBodyRange/clear", {
         method: "POST", headers, body: JSON.stringify({ applyTo: "Contents" }),
       });
-      if (!clearResp.ok) throw await graphError(clearResp, tabla);
+      if (!clearResp.ok) throw await graphError(clearResp, tabla, WORKBOOK_LISTAS_PATH);
 
       const TAMANO_BLOQUE = 500;
       const totalBloques = Math.ceil(filasValores.length / TAMANO_BLOQUE);
@@ -2237,7 +2245,7 @@
         const addResp = await fetch(wbTabla + "/rows/add", {
           method: "POST", headers, body: JSON.stringify({ values: bloque }),
         });
-        if (!addResp.ok) throw await graphError(addResp, tabla);
+        if (!addResp.ok) throw await graphError(addResp, tabla, WORKBOOK_LISTAS_PATH);
       }
 
       // Sellar fecha_ultima_actualizacion y total_registros en CAT_Listas.
@@ -2270,13 +2278,13 @@
       try {
         const token = await obtenerToken();
         const headers = { Authorization: "Bearer " + token };
-        const wbTabla = GRAPH_BASE + "/me/drive/root:" + WORKBOOK_PATH + ":/workbook/tables/" + lista.tabla_destino;
+        const wbTabla = GRAPH_BASE + "/me/drive/root:" + WORKBOOK_LISTAS_PATH + ":/workbook/tables/" + lista.tabla_destino;
         const [colsResp, rowsResp] = await Promise.all([
           fetch(wbTabla + "/columns", { headers }),
           fetch(wbTabla + "/rows", { headers }),
         ]);
-        if (!colsResp.ok) throw await graphError(colsResp, lista.tabla_destino);
-        if (!rowsResp.ok) throw await graphError(rowsResp, lista.tabla_destino);
+        if (!colsResp.ok) throw await graphError(colsResp, lista.tabla_destino, WORKBOOK_LISTAS_PATH);
+        if (!rowsResp.ok) throw await graphError(rowsResp, lista.tabla_destino, WORKBOOK_LISTAS_PATH);
         const colsData = await colsResp.json();
         const rowsData = await rowsResp.json();
         const idx = {};
