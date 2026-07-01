@@ -32,6 +32,28 @@ Tablas estructuradas (named tables):
 
 Más una hoja `CAT_Parametros` con celdas de configuración (`anios_remanencia`, etc.).
 
+### Archivo separado: listas internacionales
+
+Las listas de sanciones (OFAC, ONU, UE, etc.) viven en un **segundo archivo Excel**,
+separado de `database.xlsx` a propósito: son datos importados en bloque (OFAC por sí
+solo puede traer miles de filas) y no queremos que ese volumen infle o ponga en
+riesgo el archivo de Personas.
+
+Archivo: `/Apps/PEP-Manager/listas_internacionales.xlsx`
+
+| Tabla           | Descripción                                                        |
+|-----------------|---------------------------------------------------------------------|
+| `CAT_Listas`    | Configuración: una fila por lista (URL de la fuente, tabla destino, si está activa, última actualización) |
+| `tbl_OFAC_SDN`  | Registros importados de la lista SDN de OFAC (Tesoro de EE. UU.)     |
+
+Cada lista nueva (ONU, UE, ...) agrega una fila en `CAT_Listas` + su propia tabla
+`tbl_*` destino + un adaptador de formato en el código (`ADAPTADORES_LISTAS`).
+
+**Los nombres de tabla y de columna deben coincidir exactamente** con lo que espera
+el código (aunque no importan mayúsculas/acentos en las columnas de este módulo,
+sí importa el nombre exacto de la Tabla de Excel: `CAT_Listas`, `tbl_OFAC_SDN`, etc.
+— debe ser una Tabla real, creada con Ctrl+T, no solo una hoja con encabezados).
+
 ---
 
 ## Configuración de Azure (App Registration)
