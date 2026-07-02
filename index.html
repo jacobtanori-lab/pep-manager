@@ -2552,10 +2552,25 @@
       });
     }
 
-    // Intenta descargar automáticamente la fuente de una lista. La mayoría
-    // de estas fuentes (OFAC/ONU/UE) están pensadas para descarga directa,
-    // no para fetch() desde un origen distinto, así que si el navegador lo
-    // bloquea (CORS), se ofrece la subida manual como respaldo.
+    // URL del "espejo" en GitHub Pages (mismo origen -> sin CORS). Lo
+    // genera el GitHub Action .github/workflows/mirror-sanctions.yml, que
+    // guarda cada fuente en data/<lista_id>.<formato>. Devuelve null si no
+    // se puede componer (falta lista_id o formato).
+    function mirrorUrlDe(lista) {
+      const id = String(lista.lista_id || "").trim();
+      const ext = String(lista.formato || "").trim().toLowerCase();
+      if (!id || !ext) return null;
+      try {
+        return new URL("data/" + id + "." + ext, window.location.href).href;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    // Actualiza una lista descargando su archivo. Orden de intento:
+    //   1) espejo en GitHub Pages (mismo origen, sin CORS) — el camino normal;
+    //   2) la fuente original (suele fallar por CORS desde el navegador);
+    //   3) si ambas fallan, se ofrece la subida manual.
     async function actualizarLista(lista, statusEl) {
       const adaptador = obtenerAdaptador(lista);
       if (!adaptador) {
@@ -2563,25 +2578,44 @@
         statusEl.className = "text-xs mt-2 text-red-600";
         return;
       }
-      if (!lista.url_fuente) {
-        statusEl.textContent = "Esta lista no tiene url_fuente configurada en CAT_Listas.";
+
+      const candidatos = [];
+      const espejo = mirrorUrlDe(lista);
+      if (espejo) candidatos.push({ url: espejo, tipo: "espejo (GitHub Pages)" });
+      if (lista.url_fuente) candidatos.push({ url: lista.url_fuente, tipo: "fuente original" });
+
+      if (candidatos.length === 0) {
+        statusEl.textContent = "Esta lista no tiene formato ni url_fuente configurados en CAT_Listas.";
         statusEl.className = "text-xs mt-2 text-red-600";
         return;
       }
 
-      statusEl.textContent = "Descargando desde la fuente…";
-      statusEl.className = "text-xs mt-2 text-slate-500";
-      try {
-        const resp = await fetch(lista.url_fuente);
-        if (!resp.ok) throw new Error("La fuente respondió " + resp.status + " " + resp.statusText);
-        const texto = decodificarBuffer(await resp.arrayBuffer());
-        await procesarYEscribirLista(lista, texto, adaptador, statusEl);
-      } catch (err) {
-        console.warn("Fetch automático falló para " + lista.lista_id + ":", err);
-        statusEl.className = "text-xs mt-2 text-amber-700";
-        statusEl.textContent = "No se pudo descargar automáticamente (posible bloqueo CORS del origen). " +
-          "Descarga el archivo manualmente desde la URL configurada y súbelo con \"Subir archivo manualmente\".";
+      // Descargamos con fallback entre candidatos; el procesamiento se hace
+      // UNA sola vez, ya con el texto en mano (así un error de parseo no
+      // dispara reintentos de descarga por otra fuente).
+      let texto = null;
+      for (const cand of candidatos) {
+        statusEl.textContent = "Descargando desde " + cand.tipo + "…";
+        statusEl.className = "text-xs mt-2 text-slate-500";
+        try {
+          const resp = await fetch(cand.url, { cache: "no-store" });
+          if (!resp.ok) throw new Error(cand.tipo + " respondió " + resp.status);
+          texto = decodificarBuffer(await resp.arrayBuffer());
+          break;
+        } catch (err) {
+          console.warn("Descarga falló (" + cand.tipo + ") para " + lista.lista_id + ":", err);
+        }
       }
+
+      if (texto === null) {
+        statusEl.className = "text-xs mt-2 text-amber-700";
+        statusEl.textContent = "No se pudo descargar automáticamente (ni el espejo ni la fuente directa). " +
+          "Si el GitHub Action aún no ha corrido, córrelo desde la pestaña Actions; o descarga el archivo " +
+          "manualmente desde la URL y súbelo con \"Subir archivo manualmente\".";
+        return;
+      }
+
+      await procesarYEscribirLista(lista, texto, adaptador, statusEl);
     }
 
     // Respaldo cuando el fetch directo falla: procesa un archivo que el

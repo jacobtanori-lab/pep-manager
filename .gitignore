@@ -3,3 +3,6 @@ node_modules/
 .DS_Store
 Thumbs.db
 *.log
+
+# Descargas parciales del GitHub Action de espejo de listas
+data/*.tmp

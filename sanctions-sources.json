@@ -1,0 +1,32 @@
+[
+  {
+    "lista_id": "OFAC_SDN",
+    "file": "OFAC_SDN.xml",
+    "url": "https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/SDN.XML"
+  },
+  {
+    "lista_id": "OFAC_NONSDN",
+    "file": "OFAC_NONSDN.xml",
+    "url": "https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/CONSOLIDATED.XML"
+  },
+  {
+    "lista_id": "ONU",
+    "file": "ONU.xml",
+    "url": "https://scsanctions.un.org/resources/xml/en/consolidated.xml"
+  },
+  {
+    "lista_id": "UE",
+    "file": "UE.xml",
+    "url": "https://webgate.ec.europa.eu/fsd/fsf/public/files/xmlFullSanctionsList_1_1/content?token=dG9rZW4tMjAxNw"
+  },
+  {
+    "lista_id": "UK",
+    "file": "UK.xml",
+    "url": "https://sanctionslist.fcdo.gov.uk/docs/UK-Sanctions-List.xml"
+  },
+  {
+    "lista_id": "SAT_69B",
+    "file": "SAT_69B.csv",
+    "url": "PENDIENTE: pega aqui la url_fuente de la fila SAT_69B en tu CAT_Listas"
+  }
+]
