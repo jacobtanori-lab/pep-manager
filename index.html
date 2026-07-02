@@ -637,6 +637,7 @@
     const ADAPTADORES_LISTAS = {
       OFAC_SDN: parseOFAC_SDN,
       ONU: parseONU,
+      UE: parseUE,
     };
 
     // SINGLE SOURCE OF TRUTH: orden lógico de columnas de tbl_Personas.
@@ -2588,6 +2589,77 @@
       };
 
       return individuos.map(mapIndividuo).concat(entidades.map(mapEntidad));
+    }
+
+    // ---- Adaptador: XML de la Lista Consolidada de Sanciones de la UE ----
+    // Fuente oficial (FISMA / Comisión Europea), requiere el token público:
+    // https://webgate.ec.europa.eu/fsd/fsf/public/files/xmlFullSanctionsList_1_1/content?token=dG9rZW4tMjAxNw
+    // Raíz <export xmlns="http://eu.europa.ec/fpi/fsd/export"> (namespace por
+    // defecto, como OFAC), con una <sanctionEntity> por sujeto. A diferencia
+    // de OFAC/ONU, la UE guarda casi todo en ATRIBUTOS, no en el texto del
+    // elemento. Si un día devuelve 0 registros, la UE cambió el esquema y hay
+    // que revisar los nombres de tag/atributo de esta función.
+    function parseUE(xmlText) {
+      const doc = new DOMParser().parseFromString(xmlText, "application/xml");
+      if (doc.getElementsByTagName("parsererror").length > 0) {
+        throw new Error("El XML de la UE no se pudo interpretar (formato inesperado).");
+      }
+
+      const entradas = Array.from(doc.getElementsByTagName("sanctionEntity"));
+      if (entradas.length === 0) {
+        throw new Error("No se encontraron entradas <sanctionEntity> en el XML. El esquema de la UE pudo haber cambiado.");
+      }
+
+      const hijos = (el, tag) =>
+        Array.from(el.children).filter((c) => c.tagName === tag);
+      const attr = (el, nombre) => (el ? (el.getAttribute(nombre) || "").trim() : "");
+
+      // La UE usa "person"/"enterprise"; lo traducimos al vocabulario propio.
+      const mapTipo = (code) =>
+        code === "person" ? "Persona" : (code === "enterprise" ? "Entidad" : (code || "Desconocido"));
+
+      return entradas.map((entry) => {
+        const aliasEls = hijos(entry, "nameAlias");
+        const nombresTodos = aliasEls.map((n) => attr(n, "wholeName")).filter(Boolean);
+        // El nombre latino canónico suele venir con nameLanguage vacío; si
+        // existe, lo preferimos como principal para no quedarnos con una
+        // variante en otro alfabeto/idioma (PT, AR, RU…).
+        const elPrincipal =
+          aliasEls.find((n) => attr(n, "wholeName") && attr(n, "nameLanguage") === "") ||
+          aliasEls.find((n) => attr(n, "wholeName"));
+        const principal = elPrincipal ? attr(elPrincipal, "wholeName") : "(sin nombre)";
+        const alias = [...new Set(nombresTodos.filter((x) => x !== principal))].join("; ");
+
+        const nacionalidades = hijos(entry, "citizenship")
+          .map((c) => attr(c, "countryDescription")).filter(Boolean).join("; ");
+
+        const fechasNac = hijos(entry, "birthdate")
+          .map((b) => attr(b, "birthdate") || attr(b, "year")).filter(Boolean).join("; ");
+
+        // Puede haber varias <regulation>; juntamos programas únicos y usamos
+        // la primera fecha de publicación como fecha de la fuente.
+        const regs = hijos(entry, "regulation");
+        const programas = [...new Set(regs.map((r) => attr(r, "programme")).filter(Boolean))].join("; ");
+        const fechaFuente = regs.length ? attr(regs[0], "publicationDate") : "";
+
+        const subjectType = hijos(entry, "subjectType")[0];
+        const remark = hijos(entry, "remark")
+          .map((r) => r.textContent.trim()).filter(Boolean).join(" | ");
+
+        return {
+          registro_id: "UE-" + attr(entry, "logicalId"),
+          lista_origen: "UE",
+          tipo_sujeto: mapTipo(attr(subjectType, "code")),
+          nombre_principal: principal,
+          alias: alias,
+          nacionalidad: nacionalidades,
+          fecha_nacimiento: fechasNac,
+          id_original: attr(entry, "euReferenceNumber") || attr(entry, "logicalId"),
+          programa_motivo: programas,
+          fecha_fuente: fechaFuente,
+          notas: remark,
+        };
+      });
     }
   </script>
 </body>
