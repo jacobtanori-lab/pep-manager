@@ -2292,10 +2292,21 @@
       });
 
       mostrarOverlay(true, "Vaciando " + tabla + "…");
-      const clearResp = await fetch(wbTabla + "/dataBodyRange/clear", {
-        method: "POST", headers, body: JSON.stringify({ applyTo: "Contents" }),
+      // ELIMINAR las filas anteriores, no solo su contenido. Con
+      // dataBodyRange/clear (applyTo:Contents) las filas seguían existiendo
+      // vacías y rows/add insertaba DESPUÉS de ellas, dejando filas en blanco
+      // arriba de los datos nuevos que crecían en cada subida. dataBodyRange/
+      // delete con shift:Up borra las filas y encoge la tabla al encabezado,
+      // así rows/add empieza justo debajo del header. Si la tabla no tiene
+      // filas (recién creada con Ctrl+T sobre solo el encabezado) no hay
+      // dataBodyRange que borrar y Graph responde error: lo ignoramos.
+      const delResp = await fetch(wbTabla + "/dataBodyRange/delete", {
+        method: "POST", headers, body: JSON.stringify({ shift: "Up" }),
       });
-      if (!clearResp.ok) throw await graphError(clearResp, tabla, WORKBOOK_LISTAS_PATH);
+      if (!delResp.ok) {
+        console.warn("dataBodyRange/delete no aplicó en " + tabla +
+          " (probablemente la tabla ya estaba vacía): " + delResp.status);
+      }
 
       const TAMANO_BLOQUE = 500;
       const totalBloques = Math.ceil(filasValores.length / TAMANO_BLOQUE);
