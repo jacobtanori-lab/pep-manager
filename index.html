@@ -636,6 +636,7 @@
     // es nuevo, se agrega aquí una función más.
     const ADAPTADORES_LISTAS = {
       OFAC_SDN: parseOFAC_SDN,
+      ONU: parseONU,
     };
 
     // SINGLE SOURCE OF TRUTH: orden lógico de columnas de tbl_Personas.
@@ -2478,6 +2479,104 @@
           notas: directo(entry, "remarks"),
         };
       });
+    }
+
+    // ---- Adaptador: XML de la Lista Consolidada del Consejo de Seguridad ONU ----
+    // Fuente oficial: https://scsanctions.un.org/resources/xml/en/consolidated.xml
+    // Raíz <CONSOLIDATED_LIST> con dos secciones: <INDIVIDUALS>/<INDIVIDUAL>
+    // (personas) y <ENTITIES>/<ENTITY> (entidades). A diferencia del XML de
+    // OFAC, este NO declara namespace por defecto, pero igual usamos helpers de
+    // hijo directo para no heredar tags anidados (p. ej. <ALIAS_NAME> dentro de
+    // <INDIVIDUAL_ALIAS>). Si un día devuelve 0 registros, la ONU cambió el
+    // esquema y hay que revisar los nombres de tag de esta función.
+    function parseONU(xmlText) {
+      const doc = new DOMParser().parseFromString(xmlText, "application/xml");
+      if (doc.getElementsByTagName("parsererror").length > 0) {
+        throw new Error("El XML de la ONU no se pudo interpretar (formato inesperado).");
+      }
+
+      const individuos = Array.from(doc.getElementsByTagName("INDIVIDUAL"));
+      const entidades = Array.from(doc.getElementsByTagName("ENTITY"));
+      if (individuos.length === 0 && entidades.length === 0) {
+        throw new Error("No se encontraron <INDIVIDUAL> ni <ENTITY> en el XML. El esquema de la ONU pudo haber cambiado.");
+      }
+
+      // Solo hijos DIRECTOS: un <FIRST_NAME> vive tanto en el nivel del sujeto
+      // como potencialmente anidado; no queremos "heredar" tags de bloques hijos.
+      const directo = (el, tag) => {
+        for (let i = 0; i < el.children.length; i++) {
+          if (el.children[i].tagName === tag) return el.children[i].textContent.trim();
+        }
+        return "";
+      };
+      const directos = (el, tag) =>
+        Array.from(el.children).filter((c) => c.tagName === tag);
+      const texto = (el, tag) => {
+        const n = el.getElementsByTagName(tag)[0];
+        return n ? n.textContent.trim() : "";
+      };
+
+      // Un bloque <..._DATE_OF_BIRTH> trae una fecha exacta (<DATE>) o un año/
+      // rango aproximado (<YEAR>, <FROM_YEAR>/<TO_YEAR>). Se guarda como texto.
+      const fechaNacDe = (bloque) => {
+        const date = texto(bloque, "DATE");
+        if (date) return date;
+        const year = texto(bloque, "YEAR");
+        if (year) return year;
+        const desde = texto(bloque, "FROM_YEAR");
+        const hasta = texto(bloque, "TO_YEAR");
+        if (desde || hasta) return [desde, hasta].filter(Boolean).join("-");
+        return "";
+      };
+
+      const aliasDe = (el, tag) =>
+        directos(el, tag)
+          .map((a) => texto(a, "ALIAS_NAME"))
+          .filter(Boolean).join("; ");
+
+      const mapIndividuo = (el) => {
+        const dataid = directo(el, "DATAID");
+        const nombre = ["FIRST_NAME", "SECOND_NAME", "THIRD_NAME", "FOURTH_NAME"]
+          .map((t) => directo(el, t)).filter(Boolean).join(" ");
+        const nacionalidad = directos(el, "NATIONALITY")
+          .flatMap((n) => Array.from(n.getElementsByTagName("VALUE")).map((v) => v.textContent.trim()))
+          .filter(Boolean).join("; ");
+        const fechasNac = directos(el, "INDIVIDUAL_DATE_OF_BIRTH")
+          .map(fechaNacDe).filter(Boolean).join("; ");
+        return {
+          registro_id: "ONU-" + dataid,
+          lista_origen: "ONU",
+          tipo_sujeto: "Persona",
+          nombre_principal: nombre || "(sin nombre)",
+          alias: aliasDe(el, "INDIVIDUAL_ALIAS"),
+          nacionalidad: nacionalidad,
+          fecha_nacimiento: fechasNac,
+          id_original: directo(el, "REFERENCE_NUMBER") || dataid,
+          programa_motivo: directo(el, "UN_LIST_TYPE"),
+          fecha_fuente: directo(el, "LISTED_ON"),
+          notas: directo(el, "COMMENTS1"),
+        };
+      };
+
+      const mapEntidad = (el) => {
+        const dataid = directo(el, "DATAID");
+        return {
+          registro_id: "ONU-" + dataid,
+          lista_origen: "ONU",
+          tipo_sujeto: "Entidad",
+          // Las entidades de la ONU llevan el nombre completo en <FIRST_NAME>.
+          nombre_principal: directo(el, "FIRST_NAME") || "(sin nombre)",
+          alias: aliasDe(el, "ENTITY_ALIAS"),
+          nacionalidad: "",
+          fecha_nacimiento: "",
+          id_original: directo(el, "REFERENCE_NUMBER") || dataid,
+          programa_motivo: directo(el, "UN_LIST_TYPE"),
+          fecha_fuente: directo(el, "LISTED_ON"),
+          notas: directo(el, "COMMENTS1"),
+        };
+      };
+
+      return individuos.map(mapIndividuo).concat(entidades.map(mapEntidad));
     }
   </script>
 </body>
