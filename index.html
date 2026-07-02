@@ -564,9 +564,9 @@
                 <span id="bitacoraCount" class="text-slate-400">0 evento(s)</span>
               </p>
             </div>
-            <button id="btnLimpiarBitacora"
+            <button id="btnRecargarBitacora"
               class="text-sm font-medium px-3 py-2 rounded-lg border border-slate-300 hover:bg-slate-100 transition shadow-sm">
-              Limpiar bitácora
+              Recargar
             </button>
           </div>
 
@@ -661,9 +661,11 @@
     // automáticamente para obtener refresh tokens.
     const SCOPES = ["User.Read", "Files.ReadWrite"];
 
-    // Bitácora local de eventos (localStorage de este navegador).
-    const BITACORA_KEY = "pep_bitacora_v1";
-    const BITACORA_MAX = 500;
+    // Bitácora / audit log PERSISTENTE: tabla tbl_Bitacora en database.xlsx.
+    // Cada evento se agrega como una fila; la vista lee de OneDrive, no de
+    // localStorage, para que el registro sobreviva y sea compartido.
+    const TABLE_BITACORA = "tbl_Bitacora";
+    const COLUMNAS_BITACORA = ["fecha_hora", "usuario", "evento", "detalle"];
 
     // Ruta del archivo Excel en OneDrive personal y tabla a leer.
     const WORKBOOK_PATH = "/Apps/PEP-Manager/database.xlsx";
@@ -891,7 +893,9 @@
 
     $("btnLogout").addEventListener("click", async () => {
       const cuenta = getCuentaActiva();
-      registrarBitacora("Cierre de sesión", (cuenta && (cuenta.name || cuenta.username)) || "");
+      // Se espera a que quede registrado ANTES de cerrar la sesión (después ya
+      // no habría token para escribir en OneDrive).
+      await registrarBitacora("Cierre de sesión", (cuenta && (cuenta.name || cuenta.username)) || "");
       await msalInstance.logoutPopup({ account: cuenta });
       mostrarLogin();
     });
@@ -938,12 +942,7 @@
     $("tabListas").addEventListener("click", () => mostrarSeccion("listas"));
     $("tabBitacora").addEventListener("click", () => mostrarSeccion("bitacora"));
 
-    $("btnLimpiarBitacora").addEventListener("click", () => {
-      if (!confirm("¿Borrar toda la bitácora de este navegador? Esta acción no se puede deshacer.")) return;
-      localStorage.removeItem(BITACORA_KEY);
-      registrarBitacora("Bitácora", "Bitácora limpiada");
-      renderBitacora();
-    });
+    $("btnRecargarBitacora").addEventListener("click", () => renderBitacora());
 
     // Sub-pestañas dentro de Catálogos: Dependencias / Cargos.
     $("subtabDependencias").addEventListener("click", () => mostrarCatalogoTab("dependencias"));
@@ -1035,30 +1034,42 @@
     }
 
     // -------------------------------------------------------------
-    // Bitácora de eventos (persistida en localStorage del navegador)
+    // Bitácora / audit log persistente en OneDrive (tabla tbl_Bitacora)
     // -------------------------------------------------------------
-    function leerBitacora() {
-      try { return JSON.parse(localStorage.getItem(BITACORA_KEY) || "[]"); }
-      catch (_) { return []; }
+    function wbBitacora() {
+      return GRAPH_BASE + "/me/drive/root:" + WORKBOOK_PATH + ":/workbook/tables/" + TABLE_BITACORA;
     }
 
-    // Registra un evento. Nunca debe romper el flujo principal, por eso todo
-    // va dentro de try/catch (localStorage puede fallar en modo privado, etc.).
-    function registrarBitacora(tipo, detalle) {
+    // Registra un evento agregando una fila a tbl_Bitacora. Es "fire and
+    // forget": nunca debe romper el flujo principal, así que cualquier fallo
+    // (tabla inexistente, sin red) solo se avisa en consola.
+    async function registrarBitacora(tipo, detalle) {
+      const cuenta = getCuentaActiva();
+      const evento = {
+        fecha_hora: new Date().toISOString(),
+        usuario: (cuenta && (cuenta.username || cuenta.name)) || "—",
+        evento: tipo || "Evento",
+        detalle: detalle || "",
+      };
       try {
-        const cuenta = getCuentaActiva();
-        const log = leerBitacora();
-        log.unshift({
-          ts: new Date().toISOString(),
-          usuario: (cuenta && (cuenta.username || cuenta.name)) || "—",
-          tipo: tipo || "Evento",
-          detalle: detalle || "",
+        const token = await obtenerToken();
+        const headers = { Authorization: "Bearer " + token, "Content-Type": "application/json" };
+        const colsResp = await fetch(wbBitacora() + "/columns", { headers });
+        if (!colsResp.ok) throw new Error("tbl_Bitacora no encontrada (créala con Ctrl+T en database.xlsx).");
+        const idx = {};
+        (((await colsResp.json()).value) || []).forEach((c) => { idx[normalizarCol(c.name)] = c.index; });
+        const arr = new Array(Object.keys(idx).length).fill("");
+        COLUMNAS_BITACORA.forEach((col) => {
+          const i = idx[col];
+          if (i !== undefined) arr[i] = celdaSegura(evento[col]);
         });
-        if (log.length > BITACORA_MAX) log.length = BITACORA_MAX;
-        localStorage.setItem(BITACORA_KEY, JSON.stringify(log));
+        const addResp = await fetch(wbBitacora() + "/rows/add", {
+          method: "POST", headers, body: JSON.stringify({ values: [arr] }),
+        });
+        if (!addResp.ok) throw new Error("No se pudo escribir en tbl_Bitacora (" + addResp.status + ").");
         if (estadoApp.seccionActual === "bitacora") renderBitacora();
       } catch (err) {
-        console.warn("No se pudo registrar en la bitácora:", err);
+        console.warn("Bitácora (OneDrive) no registró el evento:", err);
       }
     }
 
@@ -1071,30 +1082,57 @@
         " " + p(d.getHours()) + ":" + p(d.getMinutes());
     }
 
-    function renderBitacora() {
-      const log = leerBitacora();
+    async function renderBitacora() {
       const tbody = $("bitacoraBody");
-      tbody.innerHTML = "";
-      $("bitacoraEmpty").classList.toggle("hidden", log.length > 0);
-      $("bitacoraWrap").classList.toggle("hidden", log.length === 0);
-      log.forEach((ev) => {
-        const tr = document.createElement("tr");
-        tr.className = "even:bg-slate-50";
-        const celdas = [
-          { t: fechaHoraLocal(ev.ts), nowrap: true, cls: "text-slate-500" },
-          { t: ev.usuario, nowrap: true, cls: "text-slate-600" },
-          { t: ev.tipo, nowrap: true, cls: "font-medium text-slate-800" },
-          { t: ev.detalle, nowrap: false, cls: "text-slate-600" },
-        ];
-        celdas.forEach((c) => {
-          const td = document.createElement("td");
-          td.className = "px-4 py-2 " + c.cls + (c.nowrap ? " whitespace-nowrap" : "");
-          td.textContent = c.t || "—";
-          tr.appendChild(td);
+      const vacio = $("bitacoraEmpty");
+      try {
+        const token = await obtenerToken();
+        const headers = { Authorization: "Bearer " + token };
+        const [colsResp, rowsResp] = await Promise.all([
+          fetch(wbBitacora() + "/columns", { headers }),
+          fetch(wbBitacora() + "/rows", { headers }),
+        ]);
+        if (!colsResp.ok || !rowsResp.ok) {
+          throw new Error("No se encontró la tabla tbl_Bitacora en database.xlsx. " +
+            "Créala con Ctrl+T (columnas: " + COLUMNAS_BITACORA.join(", ") + ").");
+        }
+        const idx = {};
+        (((await colsResp.json()).value) || []).forEach((c) => { idx[normalizarCol(c.name)] = c.index; });
+        const filas = ((await rowsResp.json()).value || []).map((r) => r.values[0]);
+        // Más recientes primero (fecha_hora es ISO, ordena bien como texto).
+        filas.sort((a, b) => String(b[idx.fecha_hora] || "").localeCompare(String(a[idx.fecha_hora] || "")));
+
+        tbody.innerHTML = "";
+        filas.forEach((v) => {
+          const tr = document.createElement("tr");
+          tr.className = "even:bg-slate-50";
+          const celdas = [
+            { t: fechaHoraLocal(v[idx.fecha_hora]), nowrap: true, cls: "text-slate-500" },
+            { t: v[idx.usuario], nowrap: true, cls: "text-slate-600" },
+            { t: v[idx.evento], nowrap: true, cls: "font-medium text-slate-800" },
+            { t: v[idx.detalle], nowrap: false, cls: "text-slate-600" },
+          ];
+          celdas.forEach((c) => {
+            const td = document.createElement("td");
+            td.className = "px-4 py-2 " + c.cls + (c.nowrap ? " whitespace-nowrap" : "");
+            td.textContent = (c.t !== undefined && c.t !== null && c.t !== "") ? c.t : "—";
+            tr.appendChild(td);
+          });
+          tbody.appendChild(tr);
         });
-        tbody.appendChild(tr);
-      });
-      $("bitacoraCount").textContent = log.length + " evento(s)";
+
+        vacio.textContent = "No hay eventos registrados aún";
+        vacio.classList.toggle("hidden", filas.length > 0);
+        $("bitacoraWrap").classList.toggle("hidden", filas.length === 0);
+        $("bitacoraCount").textContent = filas.length + " evento(s)";
+      } catch (err) {
+        console.warn("No se pudo cargar la bitácora:", err);
+        tbody.innerHTML = "";
+        $("bitacoraWrap").classList.add("hidden");
+        vacio.textContent = err.message || "No se pudo cargar la bitácora.";
+        vacio.classList.remove("hidden");
+        $("bitacoraCount").textContent = "0 evento(s)";
+      }
     }
 
     // -------------------------------------------------------------
