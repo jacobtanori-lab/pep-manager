@@ -2395,11 +2395,10 @@
     }
 
     // ---- Adaptador: XML de la lista SDN de OFAC (Tesoro de EE.UU.) ----
-    // Esquema documentado públicamente: raíz <sdnList>, una entrada
-    // <sdnEntry> por persona/entidad. No se pudo verificar contra el
-    // archivo real en esta sesión (pesa >10MB). Si el primer intento
-    // real devuelve 0 registros, el esquema cambió y hay que ajustar los
-    // nombres de tag de esta función.
+    // Esquema verificado contra el archivo real de OFAC (jul-2026): raíz
+    // <sdnList> con namespace por defecto, una entrada <sdnEntry> por
+    // persona/entidad. Si un día devuelve 0 registros, es que OFAC cambió
+    // el esquema y hay que revisar los nombres de tag de esta función.
     function parseOFAC_SDN(xmlText) {
       const doc = new DOMParser().parseFromString(xmlText, "application/xml");
       if (doc.getElementsByTagName("parsererror").length > 0) {
@@ -2411,20 +2410,32 @@
         throw new Error("No se encontraron entradas <sdnEntry> en el XML. El esquema de OFAC pudo haber cambiado.");
       }
 
+      // Solo hijos DIRECTOS: los campos principales del <sdnEntry> no deben
+      // "heredar" un <uid>/<firstName> anidado dentro de <aka> o de
+      // <dateOfBirthItem> (getElementsByTagName sí bajaría a esos nietos).
+      const directo = (el, tag) => {
+        for (let i = 0; i < el.children.length; i++) {
+          if (el.children[i].tagName === tag) return el.children[i].textContent.trim();
+        }
+        return "";
+      };
       const texto = (el, tag) => {
         const n = el.getElementsByTagName(tag)[0];
         return n ? n.textContent.trim() : "";
       };
       // getElementsByTagName (no querySelectorAll) porque el XML de OFAC
-      // suele declarar un namespace por defecto, y los selectores CSS no
-      // siempre casan tags sin prefijo contra XML con namespace.
+      // declara un namespace por defecto, y los selectores CSS no casan
+      // tags sin prefijo contra XML con namespace.
       const listaDe = (el, contenedorTag, hijoTag) => {
         const cont = el.getElementsByTagName(contenedorTag)[0];
         return cont ? Array.from(cont.getElementsByTagName(hijoTag)) : [];
       };
 
+      // OFAC usa "Individual"/"Entity"; lo traducimos al vocabulario propio.
+      const mapTipo = (t) => t === "Individual" ? "Persona" : (t === "Entity" ? "Entidad" : (t || "Desconocido"));
+
       return entradas.map((entry) => {
-        const uid = texto(entry, "uid");
+        const uid = directo(entry, "uid");
 
         const alias = listaDe(entry, "akaList", "aka")
           .map((aka) => [texto(aka, "firstName"), texto(aka, "lastName")].filter(Boolean).join(" "))
@@ -2439,19 +2450,19 @@
         const fechasNacimiento = listaDe(entry, "dateOfBirthList", "dateOfBirthItem")
           .map((n) => texto(n, "dateOfBirth")).filter(Boolean).join("; ");
 
-        const nombre = [texto(entry, "firstName"), texto(entry, "lastName")].filter(Boolean).join(" ");
+        const nombre = [directo(entry, "firstName"), directo(entry, "lastName")].filter(Boolean).join(" ");
 
         return {
           registro_id: "OFAC-" + uid,
           lista_origen: "OFAC_SDN",
-          tipo_sujeto: texto(entry, "sdnType") || "Desconocido",
+          tipo_sujeto: mapTipo(directo(entry, "sdnType")),
           nombre_principal: nombre || "(sin nombre)",
           alias: alias,
           nacionalidad: nacionalidades,
           fecha_nacimiento: fechasNacimiento,
           id_original: uid,
           programa_motivo: programas,
-          notas: texto(entry, "remarks"),
+          notas: directo(entry, "remarks"),
         };
       });
     }
