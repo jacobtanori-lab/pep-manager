@@ -21,6 +21,21 @@
     .err { color:#dc2626; font-size:0.875rem; margin-top:0.25rem; }
     .sec { border:1px solid #e2e8f0; border-radius:0.75rem; padding:1.25rem; }
     .sec-title { font-size:0.75rem; font-weight:700; color:#0f172a; margin-bottom:1rem; text-transform:uppercase; letter-spacing:0.04em; }
+
+    /* Contenido de las tablas de datos un poco más pequeño para leer mejor. */
+    main table tbody td { font-size:0.78rem; }
+
+    /* Columnas redimensionables a mano: cada th lleva un tirador a la derecha
+       y la tabla pasa a table-layout:fixed para respetar los anchos fijados. */
+    table.tabla-resizable { table-layout:fixed; }
+    table.tabla-resizable th,
+    table.tabla-resizable td { overflow:hidden; text-overflow:ellipsis; }
+    table.tabla-resizable th { position:relative; }
+    .col-resizer {
+      position:absolute; top:0; right:0; height:100%; width:8px;
+      cursor:col-resize; user-select:none; touch-action:none;
+    }
+    .col-resizer:hover, .col-resizer.activo { background:#3b82f6; opacity:0.4; }
   </style>
 </head>
 
@@ -111,6 +126,11 @@
           class="text-sm font-medium px-4 py-2 rounded-lg transition">
           Listas internacionales
         </button>
+        <div class="flex-1"></div>
+        <button type="button" id="tabBitacora"
+          class="text-sm font-medium px-4 py-2 rounded-lg transition">
+          🗒️ Bitácora
+        </button>
       </nav>
 
       <!-- ===================== SECCIÓN PERSONAS ===================== -->
@@ -172,7 +192,7 @@
           </div>
 
           <div class="overflow-auto max-h-[60vh]">
-            <table class="w-full text-sm">
+            <table id="tablaPersonas" class="w-full text-sm">
               <thead>
                 <tr class="sticky top-0 z-10 bg-slate-100 text-left text-slate-700">
                   <th class="px-4 py-3 font-semibold whitespace-nowrap">persona_id</th>
@@ -416,7 +436,7 @@
                        focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
             </div>
             <div class="overflow-auto max-h-[60vh]">
-              <table class="w-full text-sm">
+              <table id="tablaDependencias" class="w-full text-sm">
                 <thead>
                   <tr class="sticky top-0 z-10 bg-slate-100 text-left text-slate-700">
                     <th class="px-4 py-3 font-semibold whitespace-nowrap">dependencia_id</th>
@@ -442,7 +462,7 @@
                        focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
             </div>
             <div class="overflow-auto max-h-[60vh]">
-              <table class="w-full text-sm">
+              <table id="tablaCargos" class="w-full text-sm">
                 <thead>
                   <tr class="sticky top-0 z-10 bg-slate-100 text-left text-slate-700">
                     <th class="px-4 py-3 font-semibold whitespace-nowrap">cargo_id</th>
@@ -515,7 +535,7 @@
                      focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
           </div>
           <div class="overflow-auto max-h-[60vh]">
-            <table class="w-full text-sm">
+            <table id="tablaRegistrosLista" class="w-full text-sm">
               <thead>
                 <tr class="sticky top-0 z-10 bg-slate-100 text-left text-slate-700">
                   <th class="px-4 py-3 font-semibold whitespace-nowrap">registro_id</th>
@@ -532,12 +552,74 @@
           <div id="rowCountRegistrosLista" class="px-5 py-3 text-xs text-slate-400 border-t border-slate-100"></div>
         </div>
       </div><!-- /seccionListas -->
+
+      <!-- ===================== SECCIÓN BITÁCORA ===================== -->
+      <div id="seccionBitacora" class="hidden">
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div class="px-5 py-4 border-b border-slate-200 flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <h2 class="text-lg font-semibold text-slate-900">Bitácora de eventos</h2>
+              <p class="text-xs text-slate-500">
+                Registro local de acciones (este navegador) ·
+                <span id="bitacoraCount" class="text-slate-400">0 evento(s)</span>
+              </p>
+            </div>
+            <button id="btnLimpiarBitacora"
+              class="text-sm font-medium px-3 py-2 rounded-lg border border-slate-300 hover:bg-slate-100 transition shadow-sm">
+              Limpiar bitácora
+            </button>
+          </div>
+
+          <div id="bitacoraEmpty" class="hidden p-12 text-center text-slate-500 text-sm">
+            No hay eventos registrados aún
+          </div>
+
+          <div id="bitacoraWrap" class="hidden overflow-auto max-h-[65vh]">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="sticky top-0 z-10 bg-slate-100 text-left text-slate-700">
+                  <th class="px-4 py-3 font-semibold whitespace-nowrap">Fecha y hora</th>
+                  <th class="px-4 py-3 font-semibold whitespace-nowrap">Usuario</th>
+                  <th class="px-4 py-3 font-semibold whitespace-nowrap">Evento</th>
+                  <th class="px-4 py-3 font-semibold">Detalle</th>
+                </tr>
+              </thead>
+              <tbody id="bitacoraBody" class="divide-y divide-slate-100"></tbody>
+            </table>
+          </div>
+        </div>
+      </div><!-- /seccionBitacora -->
     </section>
 
   </main>
 
   <!-- Toast de notificación (esquina inferior derecha) -->
   <div id="toast" class="hidden fixed bottom-5 right-5 z-50 px-4 py-3 rounded-lg shadow-lg text-sm font-medium"></div>
+
+  <!-- Modal de detalle de persona (botón 👁️ Ver) -->
+  <div id="modalVer" class="hidden fixed inset-0 z-50 bg-slate-900/40 flex items-start justify-center overflow-auto p-4">
+    <div class="bg-white rounded-xl shadow-xl w-full max-w-2xl my-8">
+      <div class="px-5 py-4 border-b border-slate-200 flex items-start justify-between gap-3">
+        <div>
+          <h3 class="text-lg font-semibold text-slate-900">Detalle de persona</h3>
+          <p id="modalVerSub" class="text-xs text-slate-500"></p>
+        </div>
+        <button id="btnCerrarModalVer" type="button"
+          class="text-slate-400 hover:text-slate-700 text-2xl leading-none px-1">&times;</button>
+      </div>
+      <div id="modalVerBody" class="p-5 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 max-h-[70vh] overflow-auto"></div>
+      <div class="px-5 py-3 border-t border-slate-200 flex justify-end gap-2">
+        <button id="btnEditarDesdeVer" type="button"
+          class="text-sm font-medium px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition shadow-sm">
+          Editar
+        </button>
+        <button id="btnCerrarModalVer2" type="button"
+          class="text-sm font-medium px-3 py-2 rounded-lg border border-slate-300 hover:bg-slate-100 transition shadow-sm">
+          Cerrar
+        </button>
+      </div>
+    </div>
+  </div>
 
   <!-- Overlay con spinner para operaciones de guardado/borrado -->
   <div id="overlay" class="hidden fixed inset-0 z-40 bg-slate-900/30 flex items-center justify-center">
@@ -578,6 +660,10 @@
     // Permisos delegados de Graph. offline_access lo agrega MSAL
     // automáticamente para obtener refresh tokens.
     const SCOPES = ["User.Read", "Files.ReadWrite"];
+
+    // Bitácora local de eventos (localStorage de este navegador).
+    const BITACORA_KEY = "pep_bitacora_v1";
+    const BITACORA_MAX = 500;
 
     // Ruta del archivo Excel en OneDrive personal y tabla a leer.
     const WORKBOOK_PATH = "/Apps/PEP-Manager/database.xlsx";
@@ -805,6 +891,7 @@
 
     $("btnLogout").addEventListener("click", async () => {
       const cuenta = getCuentaActiva();
+      registrarBitacora("Cierre de sesión", (cuenta && (cuenta.name || cuenta.username)) || "");
       await msalInstance.logoutPopup({ account: cuenta });
       mostrarLogin();
     });
@@ -849,6 +936,14 @@
     $("tabPersonas").addEventListener("click", () => mostrarSeccion("personas"));
     $("tabCatalogos").addEventListener("click", () => mostrarSeccion("catalogos"));
     $("tabListas").addEventListener("click", () => mostrarSeccion("listas"));
+    $("tabBitacora").addEventListener("click", () => mostrarSeccion("bitacora"));
+
+    $("btnLimpiarBitacora").addEventListener("click", () => {
+      if (!confirm("¿Borrar toda la bitácora de este navegador? Esta acción no se puede deshacer.")) return;
+      localStorage.removeItem(BITACORA_KEY);
+      registrarBitacora("Bitácora", "Bitácora limpiada");
+      renderBitacora();
+    });
 
     // Sub-pestañas dentro de Catálogos: Dependencias / Cargos.
     $("subtabDependencias").addEventListener("click", () => mostrarCatalogoTab("dependencias"));
@@ -880,6 +975,7 @@
       userZone.classList.remove("hidden");
       userZone.classList.add("flex");
       userName.textContent = cuenta.name || cuenta.username || "Sesión iniciada";
+      registrarBitacora("Inicio de sesión", cuenta.name || cuenta.username || "");
       // Siempre arrancamos en la lista (no en un formulario a medias).
       estadoApp.dirty = false;
       estadoApp.personaEditando = null;
@@ -895,10 +991,12 @@
       $("seccionPersonas").classList.toggle("hidden", nombre !== "personas");
       $("seccionCatalogos").classList.toggle("hidden", nombre !== "catalogos");
       $("seccionListas").classList.toggle("hidden", nombre !== "listas");
+      $("seccionBitacora").classList.toggle("hidden", nombre !== "bitacora");
 
       estilizarTab($("tabPersonas"), nombre === "personas");
       estilizarTab($("tabCatalogos"), nombre === "catalogos");
       estilizarTab($("tabListas"), nombre === "listas");
+      estilizarTab($("tabBitacora"), nombre === "bitacora");
 
       if (nombre === "catalogos") {
         if (catCargos.length === 0 || catDeps.length === 0) {
@@ -909,6 +1007,9 @@
       }
       if (nombre === "listas") {
         cargarListasConfig();
+      }
+      if (nombre === "bitacora") {
+        renderBitacora();
       }
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
@@ -931,6 +1032,115 @@
     function estilizarSubtab(btn, activo) {
       btn.className = "text-sm font-medium px-3 py-2 rounded-lg transition " +
         (activo ? "bg-slate-200 text-slate-900" : "text-slate-500 hover:bg-slate-100");
+    }
+
+    // -------------------------------------------------------------
+    // Bitácora de eventos (persistida en localStorage del navegador)
+    // -------------------------------------------------------------
+    function leerBitacora() {
+      try { return JSON.parse(localStorage.getItem(BITACORA_KEY) || "[]"); }
+      catch (_) { return []; }
+    }
+
+    // Registra un evento. Nunca debe romper el flujo principal, por eso todo
+    // va dentro de try/catch (localStorage puede fallar en modo privado, etc.).
+    function registrarBitacora(tipo, detalle) {
+      try {
+        const cuenta = getCuentaActiva();
+        const log = leerBitacora();
+        log.unshift({
+          ts: new Date().toISOString(),
+          usuario: (cuenta && (cuenta.username || cuenta.name)) || "—",
+          tipo: tipo || "Evento",
+          detalle: detalle || "",
+        });
+        if (log.length > BITACORA_MAX) log.length = BITACORA_MAX;
+        localStorage.setItem(BITACORA_KEY, JSON.stringify(log));
+        if (estadoApp.seccionActual === "bitacora") renderBitacora();
+      } catch (err) {
+        console.warn("No se pudo registrar en la bitácora:", err);
+      }
+    }
+
+    // ISO -> "dd/mm/aaaa hh:mm" en horario local.
+    function fechaHoraLocal(iso) {
+      const d = new Date(iso);
+      if (isNaN(d)) return iso || "—";
+      const p = (n) => String(n).padStart(2, "0");
+      return p(d.getDate()) + "/" + p(d.getMonth() + 1) + "/" + d.getFullYear() +
+        " " + p(d.getHours()) + ":" + p(d.getMinutes());
+    }
+
+    function renderBitacora() {
+      const log = leerBitacora();
+      const tbody = $("bitacoraBody");
+      tbody.innerHTML = "";
+      $("bitacoraEmpty").classList.toggle("hidden", log.length > 0);
+      $("bitacoraWrap").classList.toggle("hidden", log.length === 0);
+      log.forEach((ev) => {
+        const tr = document.createElement("tr");
+        tr.className = "even:bg-slate-50";
+        const celdas = [
+          { t: fechaHoraLocal(ev.ts), nowrap: true, cls: "text-slate-500" },
+          { t: ev.usuario, nowrap: true, cls: "text-slate-600" },
+          { t: ev.tipo, nowrap: true, cls: "font-medium text-slate-800" },
+          { t: ev.detalle, nowrap: false, cls: "text-slate-600" },
+        ];
+        celdas.forEach((c) => {
+          const td = document.createElement("td");
+          td.className = "px-4 py-2 " + c.cls + (c.nowrap ? " whitespace-nowrap" : "");
+          td.textContent = c.t || "—";
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      $("bitacoraCount").textContent = log.length + " evento(s)";
+    }
+
+    // -------------------------------------------------------------
+    // Columnas redimensionables a mano (arrastrar el borde del th)
+    // -------------------------------------------------------------
+    function habilitarResizeColumnas(tabla) {
+      if (!tabla || tabla.dataset.resizable === "1") return;
+      const thead = tabla.tHead;
+      if (!thead || !thead.rows.length || !tabla.offsetWidth) return; // aún no visible
+      const ths = Array.from(thead.rows[0].cells);
+      const anchos = ths.map((th) => th.offsetWidth);
+      tabla.classList.add("tabla-resizable");
+      tabla.style.width = anchos.reduce((a, b) => a + b, 0) + "px";
+      ths.forEach((th, i) => {
+        th.style.width = anchos[i] + "px";
+        const tirador = document.createElement("span");
+        tirador.className = "col-resizer";
+        tirador.addEventListener("mousedown", (e) => iniciarResize(e, th, tabla, tirador));
+        th.appendChild(tirador);
+      });
+      tabla.dataset.resizable = "1";
+    }
+
+    function iniciarResize(e, th, tabla, tirador) {
+      e.preventDefault();
+      const startX = e.pageX;
+      const startW = th.offsetWidth;
+      const startTabla = tabla.offsetWidth;
+      tirador.classList.add("activo");
+      document.body.style.userSelect = "none";
+      document.body.style.cursor = "col-resize";
+      const mover = (ev) => {
+        const delta = ev.pageX - startX;
+        const w = Math.max(48, startW + delta);
+        th.style.width = w + "px";
+        tabla.style.width = (startTabla + (w - startW)) + "px";
+      };
+      const soltar = () => {
+        document.removeEventListener("mousemove", mover);
+        document.removeEventListener("mouseup", soltar);
+        tirador.classList.remove("activo");
+        document.body.style.userSelect = "";
+        document.body.style.cursor = "";
+      };
+      document.addEventListener("mousemove", mover);
+      document.addEventListener("mouseup", soltar);
     }
 
     // -------------------------------------------------------------
@@ -1080,11 +1290,7 @@
         btnVer.className = "text-base hover:scale-110 transition";
         btnVer.title = "Ver detalles";
         btnVer.textContent = "👁️";
-        btnVer.addEventListener("click", () => {
-          const persona = {};
-          Object.keys(idx).forEach((col) => { persona[col] = valores[idx[col]]; });
-          console.log("Persona:", persona);
-        });
+        btnVer.addEventListener("click", () => verPersona(fila));
 
         // ✏️ Editar: abre la vista detalle con los datos cargados.
         const btnEditar = document.createElement("button");
@@ -1113,6 +1319,10 @@
 
       rowCount.textContent = filas.length + " persona(s)" +
         (q ? " (filtradas de " + datosCargados.filas.length + ")" : "");
+
+      // Habilita el redimensionado manual de columnas una vez que la tabla
+      // ya está en pantalla (requiere offsetWidth > 0). Solo se instala una vez.
+      habilitarResizeColumnas($("tablaPersonas"));
     }
 
     // Convierte un número serial de Excel a string dd/mm/aaaa.
@@ -1126,6 +1336,62 @@
       const yyyy = date.getUTCFullYear();
       return `${dd}/${mm}/${yyyy}`;
     }
+
+    // -------------------------------------------------------------
+    // Modal "Ver detalle" de una persona (botón 👁️)
+    // -------------------------------------------------------------
+    let personaEnModal = null;
+
+    function verPersona(fila) {
+      const idx = datosCargados.idx;
+      const valores = fila.values[0];
+      personaEnModal = fila;
+
+      const pid = valores[idx["persona_id"]] || "";
+      const nombre = valores[idx["nombre_completo"]] || "";
+      $("modalVerSub").textContent = [pid, nombre].filter(Boolean).join(" · ");
+
+      const body = $("modalVerBody");
+      body.innerHTML = "";
+      COLUMNAS_PERSONAS.forEach((col) => {
+        const i = idx[col];
+        if (i === undefined) return;
+        let val = valores[i];
+        if (val === null || val === undefined || val === "") {
+          val = "—";
+        } else if (col.indexOf("fecha") !== -1 && !isNaN(val)) {
+          // Las columnas de fecha llegan como serial de Excel.
+          val = formatExcelDate(val);
+        }
+        const campo = document.createElement("div");
+        const lbl = document.createElement("div");
+        lbl.className = "text-xs font-medium text-slate-500";
+        lbl.textContent = col;
+        const v = document.createElement("div");
+        v.className = "text-sm text-slate-800 break-words";
+        v.textContent = val;
+        campo.appendChild(lbl);
+        campo.appendChild(v);
+        body.appendChild(campo);
+      });
+
+      $("modalVer").classList.remove("hidden");
+    }
+
+    function cerrarModalVer() {
+      $("modalVer").classList.add("hidden");
+      personaEnModal = null;
+    }
+
+    $("btnCerrarModalVer").addEventListener("click", cerrarModalVer);
+    $("btnCerrarModalVer2").addEventListener("click", cerrarModalVer);
+    // Cerrar al hacer clic fuera del cuadro (en el fondo oscuro).
+    $("modalVer").addEventListener("click", (e) => { if (e.target === $("modalVer")) cerrarModalVer(); });
+    $("btnEditarDesdeVer").addEventListener("click", () => {
+      const fila = personaEnModal;
+      cerrarModalVer();
+      if (fila) abrirEditar(fila);
+    });
 
     // Clases Tailwind para el badge de estatus según su valor.
     function claseEstatus(valor) {
@@ -1240,6 +1506,7 @@
         (q ? " (filtradas de " + catDeps.length + ")" : "");
       $("countDependencias").textContent = catDeps.length ? "(" + catDeps.length + ")" : "";
       $("panelDependencias").classList.remove("hidden");
+      habilitarResizeColumnas($("tablaDependencias"));
     }
 
     function renderCatalogoCargos(filtro) {
@@ -1292,6 +1559,7 @@
         (q ? " (filtrados de " + catCargos.length + ")" : "");
       $("countCargos").textContent = catCargos.length ? "(" + catCargos.length + ")" : "";
       $("panelCargos").classList.remove("hidden");
+      habilitarResizeColumnas($("tablaCargos"));
     }
 
     // =============================================================
@@ -1751,6 +2019,10 @@
         estadoApp.personaEditando = null;
         mostrarVista("lista");
         mostrarToast("Persona guardada correctamente", "ok");
+        registrarBitacora(
+          editando ? "Edición de persona" : "Alta de persona",
+          [persona.persona_id, persona.nombre_completo].filter(Boolean).join(" · ")
+        );
         await cargarPersonas();
       } catch (err) {
         mostrarOverlay(false);
@@ -1780,6 +2052,7 @@
         await aplicarFormatoFechas(fila.index, idx, { fecha_actualizacion: hoyISO() });
         mostrarOverlay(false);
         mostrarToast("Persona marcada como eliminada", "ok");
+        registrarBitacora("Baja de persona", nombre);
         await cargarPersonas();
       } catch (err) {
         mostrarOverlay(false);
@@ -2271,6 +2544,8 @@
         statusEl.textContent = "Actualizado correctamente: " + registros.length + " registro(s).";
         statusEl.className = "text-xs mt-2 text-green-700";
         mostrarToast((lista.nombre || lista.lista_id) + " actualizada (" + registros.length + " registros)", "ok");
+        registrarBitacora("Actualización de lista",
+          (lista.nombre || lista.lista_id) + " · " + registros.length + " registro(s)");
         await cargarListasConfig();
       } catch (err) {
         mostrarOverlay(false);
@@ -2446,6 +2721,8 @@
 
       $("rowCountRegistrosLista").textContent = filas.length + " registro(s)" +
         (q ? " (filtrados de " + registrosListaActual.filas.length + ")" : "");
+
+      habilitarResizeColumnas($("tablaRegistrosLista"));
     }
 
     // ---- Adaptador base: XML de OFAC (Tesoro de EE.UU.) ----
