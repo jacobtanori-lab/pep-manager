@@ -1963,6 +1963,31 @@
       return GRAPH_BASE + "/me/drive/root:" + WORKBOOK_LISTAS_PATH + ":/workbook/tables/" + TABLE_LISTAS;
     }
 
+    // Nombre de la tabla destino sin espacios accidentales (un espacio
+    // invisible en la celda tabla_destino rompe la URL de Graph -> 404).
+    function nombreTablaDestino(lista) {
+      return String(lista.tabla_destino || "").trim();
+    }
+
+    // Diagnóstico: devuelve los nombres de TODAS las tablas de Excel reales
+    // que existen en listas_internacionales.xlsx. Sirve para responder sin
+    // adivinar "¿existe tbl_OFAC_SDN y cómo está escrita exactamente?".
+    async function listarTablasDeListas() {
+      try {
+        const token = await obtenerToken();
+        const headers = { Authorization: "Bearer " + token };
+        const resp = await fetch(
+          GRAPH_BASE + "/me/drive/root:" + WORKBOOK_LISTAS_PATH + ":/workbook/tables",
+          { headers }
+        );
+        if (!resp.ok) return null;
+        const data = await resp.json();
+        return (data.value || []).map((t) => t.name);
+      } catch (_) {
+        return null;
+      }
+    }
+
     // Normaliza un encabezado de columna para compararlo sin importar
     // mayúsculas/minúsculas ni acentos. Estas tablas de configuración las
     // captura una persona a mano en Excel, y "Nombre"/"nombre" o
@@ -2026,7 +2051,11 @@
       cont.innerHTML = "";
 
       catListas.forEach((lista) => {
-        const activa = String(lista.activa).toLowerCase() === "true" || lista.activa === true;
+        // Excel puede devolver el booleano como true, "TRUE" o, en locale
+        // español, "VERDADERO". Aceptamos también sí/si/1/x por si se
+        // capturó como texto.
+        const activa = lista.activa === true ||
+          ["true", "verdadero", "sí", "si", "1", "x"].includes(String(lista.activa).trim().toLowerCase());
         const tieneAdaptador = !!ADAPTADORES_LISTAS[lista.lista_id];
 
         const card = document.createElement("div");
@@ -2190,8 +2219,15 @@
         await cargarListasConfig();
       } catch (err) {
         mostrarOverlay(false);
-        console.error("Error al escribir en " + lista.tabla_destino + ":", err);
-        statusEl.textContent = "Error al guardar en Excel: " + (err.message || err);
+        console.error("Error al escribir en " + nombreTablaDestino(lista) + ":", err);
+        const tablas = await listarTablasDeListas();
+        let extra = "";
+        if (tablas) {
+          extra = tablas.length
+            ? " · Tablas en el archivo: " + tablas.join(", ")
+            : " · El archivo no contiene ninguna Tabla de Excel (usa Ctrl+T).";
+        }
+        statusEl.textContent = "Error al guardar en Excel: " + (err.message || err) + extra;
         statusEl.className = "text-xs mt-2 text-red-600";
       }
     }
@@ -2205,7 +2241,7 @@
     async function escribirRegistrosLista(lista, registros) {
       const token = await obtenerToken();
       const headers = { Authorization: "Bearer " + token, "Content-Type": "application/json" };
-      const tabla = lista.tabla_destino;
+      const tabla = nombreTablaDestino(lista);
       const wbTabla = GRAPH_BASE + "/me/drive/root:" + WORKBOOK_LISTAS_PATH + ":/workbook/tables/" + tabla;
 
       const colsResp = await fetch(wbTabla + "/columns", { headers });
@@ -2275,28 +2311,39 @@
       $("tbodyRegistrosLista").innerHTML = "";
       $("searchRegistrosLista").value = "";
 
+      const tabla = nombreTablaDestino(lista);
       try {
         const token = await obtenerToken();
         const headers = { Authorization: "Bearer " + token };
-        const wbTabla = GRAPH_BASE + "/me/drive/root:" + WORKBOOK_LISTAS_PATH + ":/workbook/tables/" + lista.tabla_destino;
+        const wbTabla = GRAPH_BASE + "/me/drive/root:" + WORKBOOK_LISTAS_PATH + ":/workbook/tables/" + tabla;
         const [colsResp, rowsResp] = await Promise.all([
           fetch(wbTabla + "/columns", { headers }),
           fetch(wbTabla + "/rows", { headers }),
         ]);
-        if (!colsResp.ok) throw await graphError(colsResp, lista.tabla_destino, WORKBOOK_LISTAS_PATH);
-        if (!rowsResp.ok) throw await graphError(rowsResp, lista.tabla_destino, WORKBOOK_LISTAS_PATH);
+        if (!colsResp.ok) throw await graphError(colsResp, tabla, WORKBOOK_LISTAS_PATH);
+        if (!rowsResp.ok) throw await graphError(rowsResp, tabla, WORKBOOK_LISTAS_PATH);
         const colsData = await colsResp.json();
         const rowsData = await rowsResp.json();
         const idx = {};
         (colsData.value || []).forEach((c) => { idx[normalizarCol(c.name)] = c.index; });
 
         registrosListaActual = { listaId: lista.lista_id, idx, filas: rowsData.value || [] };
-        $("registrosListaSub").textContent = "Tabla " + lista.tabla_destino;
+        $("registrosListaSub").textContent = "Tabla " + tabla;
         renderRegistrosLista("");
         $("registrosListaWrap").scrollIntoView({ behavior: "smooth", block: "start" });
       } catch (err) {
-        console.error("Error al leer registros de " + lista.tabla_destino + ":", err);
-        $("registrosListaSub").textContent = "Error: " + (err.message || err);
+        console.error("Error al leer registros de " + tabla + ":", err);
+        // Diagnóstico: listamos las tablas que SÍ existen en el archivo,
+        // para ver de inmediato si el nombre está mal escrito o la tabla
+        // quedó en otro archivo/no es una Tabla real.
+        const tablas = await listarTablasDeListas();
+        let extra = "";
+        if (tablas) {
+          extra = tablas.length
+            ? " · Tablas encontradas en listas_internacionales.xlsx: " + tablas.join(", ")
+            : " · El archivo no contiene ninguna Tabla de Excel (¿solo hojas con encabezados? usa Ctrl+T).";
+        }
+        $("registrosListaSub").textContent = "Error: " + (err.message || err) + extra;
       }
     }
 
