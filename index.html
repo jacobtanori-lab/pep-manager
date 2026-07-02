@@ -638,6 +638,7 @@
       OFAC_SDN: parseOFAC_SDN,
       ONU: parseONU,
       UE: parseUE,
+      SAT_69B: parseSAT69B,
     };
 
     // SINGLE SOURCE OF TRUTH: orden lógico de columnas de tbl_Personas.
@@ -2014,6 +2015,20 @@
         .trim().toLowerCase();
     }
 
+    // Decodifica los bytes crudos de una fuente a texto. No todas las listas
+    // vienen en UTF-8: los CSV del SAT (69-B) están en Windows-1252 y sus
+    // acentos son bytes sueltos (0xF3 = "ó") que resp.text()/file.text()
+    // decodificarían como UTF-8 y romperían (�). Intentamos UTF-8 estricto y,
+    // si los bytes no son UTF-8 válido, caemos a Windows-1252. Los XML de
+    // OFAC/ONU/UE son UTF-8 válido, así que el primer intento los cubre.
+    function decodificarBuffer(buf) {
+      try {
+        return new TextDecoder("utf-8", { fatal: true }).decode(buf);
+      } catch (_) {
+        return new TextDecoder("windows-1252").decode(buf);
+      }
+    }
+
     // Carga CAT_Listas y dibuja una tarjeta por cada lista configurada.
     async function cargarListasConfig() {
       $("listasLoading").classList.remove("hidden");
@@ -2186,7 +2201,7 @@
       try {
         const resp = await fetch(lista.url_fuente);
         if (!resp.ok) throw new Error("La fuente respondió " + resp.status + " " + resp.statusText);
-        const texto = await resp.text();
+        const texto = decodificarBuffer(await resp.arrayBuffer());
         await procesarYEscribirLista(lista, texto, adaptador, statusEl);
       } catch (err) {
         console.warn("Fetch automático falló para " + lista.lista_id + ":", err);
@@ -2208,7 +2223,7 @@
       statusEl.textContent = "Leyendo archivo…";
       statusEl.className = "text-xs mt-2 text-slate-500";
       try {
-        const texto = await file.text();
+        const texto = decodificarBuffer(await file.arrayBuffer());
         await procesarYEscribirLista(lista, texto, adaptador, statusEl);
       } catch (err) {
         console.error("Error al procesar archivo subido:", err);
@@ -2660,6 +2675,97 @@
           notas: remark,
         };
       });
+    }
+
+    // Parser CSV mínimo pero correcto: respeta campos entre comillas con comas
+    // y saltos de línea internos, y comillas escapadas ("" -> "). Devuelve un
+    // arreglo de filas, cada una un arreglo de celdas (texto sin las comillas).
+    function parseCSV(texto) {
+      const filas = [];
+      let campo = "", fila = [], enComillas = false;
+      for (let i = 0; i < texto.length; i++) {
+        const c = texto[i];
+        if (enComillas) {
+          if (c === '"') {
+            if (texto[i + 1] === '"') { campo += '"'; i++; }
+            else enComillas = false;
+          } else {
+            campo += c;
+          }
+        } else if (c === '"') {
+          enComillas = true;
+        } else if (c === ",") {
+          fila.push(campo); campo = "";
+        } else if (c === "\n") {
+          fila.push(campo); filas.push(fila); fila = []; campo = "";
+        } else if (c === "\r") {
+          // ignora CR: los CRLF se resuelven con el LF
+        } else {
+          campo += c;
+        }
+      }
+      if (campo !== "" || fila.length) { fila.push(campo); filas.push(fila); }
+      return filas;
+    }
+
+    // ---- Adaptador: CSV del Listado 69-B del SAT (México) ----
+    // Contribuyentes con operaciones presuntamente inexistentes (EFOS), art.
+    // 69-B del CFF. El CSV trae 2 líneas de preámbulo (aviso legal + título)
+    // antes del encabezado real "No,RFC,Nombre del Contribuyente,Situación…".
+    // Viene en Windows-1252 (lo resuelve decodificarBuffer antes de llegar
+    // aquí). Si un día no encuentra la fila de encabezado, el SAT cambió el
+    // formato y hay que revisar esta función.
+    function parseSAT69B(textoCrudo) {
+      const filas = parseCSV(textoCrudo);
+      // Localiza el encabezado por contenido (No + RFC), no por posición fija.
+      const headerIdx = filas.findIndex((f) =>
+        normalizarCol(f[0]) === "no" && normalizarCol(f[1]) === "rfc");
+      if (headerIdx === -1) {
+        throw new Error("No se encontró la fila de encabezado (No, RFC, …) en el CSV del SAT. El formato pudo haber cambiado.");
+      }
+
+      // Mapeo de columnas por nombre normalizado (sin acentos/caja), para no
+      // depender del orden exacto de las columnas del SAT.
+      const encabezados = filas[headerIdx].map(normalizarCol);
+      const col = (nombre) => encabezados.indexOf(normalizarCol(nombre));
+      const iRFC = col("RFC");
+      const iNombre = col("Nombre del Contribuyente");
+      const iSituacion = col("Situación del contribuyente");
+      const iFechaPresunto = col("Publicación página SAT presuntos");
+      const iOficioPresuncion = col("Número y fecha de oficio global de presunción SAT");
+      if (iRFC === -1 || iNombre === -1) {
+        throw new Error("El CSV del SAT no tiene las columnas RFC / Nombre del Contribuyente esperadas.");
+      }
+
+      const celda = (f, i) => (i >= 0 && f[i] != null ? String(f[i]).trim() : "");
+      const registros = [];
+      for (let r = headerIdx + 1; r < filas.length; r++) {
+        const f = filas[r];
+        const rfc = celda(f, iRFC);
+        if (!rfc) continue; // filas vacías o de relleno al final
+        const situacion = celda(f, iSituacion);
+        registros.push({
+          registro_id: "SAT69B-" + rfc,
+          lista_origen: "SAT_69B",
+          // RFC de 13 caracteres = persona física; 12 = persona moral.
+          tipo_sujeto: rfc.length === 13 ? "Persona" : "Entidad",
+          nombre_principal: celda(f, iNombre) || "(sin nombre)",
+          alias: "",
+          nacionalidad: "",
+          fecha_nacimiento: "",
+          id_original: rfc,
+          programa_motivo: "Art. 69-B CFF" + (situacion ? " — " + situacion : ""),
+          fecha_fuente: celda(f, iFechaPresunto),
+          // La "situación" (Presunto/Desvirtuado/Definitivo/Sentencia Favorable)
+          // es el estatus real del contribuyente en este listado.
+          estatus: situacion || "Activo",
+          notas: celda(f, iOficioPresuncion),
+        });
+      }
+      if (registros.length === 0) {
+        throw new Error("El CSV del SAT se leyó pero no se encontraron contribuyentes con RFC.");
+      }
+      return registros;
     }
   </script>
 </body>
