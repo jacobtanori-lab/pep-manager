@@ -1969,6 +1969,17 @@
       return String(lista.tabla_destino || "").trim();
     }
 
+    // Busca el adaptador de formato de una lista de forma tolerante: el
+    // lista_id capturado a mano puede traer espacios o distinta caja
+    // ("OFAC_SDN " / "ofac_sdn") y no debe fallar por eso.
+    function obtenerAdaptador(lista) {
+      const clave = String(lista.lista_id || "").trim();
+      if (ADAPTADORES_LISTAS[clave]) return ADAPTADORES_LISTAS[clave];
+      const claveUp = clave.toUpperCase();
+      const match = Object.keys(ADAPTADORES_LISTAS).find((k) => k.toUpperCase() === claveUp);
+      return match ? ADAPTADORES_LISTAS[match] : null;
+    }
+
     // Diagnóstico: devuelve los nombres de TODAS las tablas de Excel reales
     // que existen en listas_internacionales.xlsx. Sirve para responder sin
     // adivinar "¿existe tbl_OFAC_SDN y cómo está escrita exactamente?".
@@ -2056,7 +2067,7 @@
         // capturó como texto.
         const activa = lista.activa === true ||
           ["true", "verdadero", "sí", "si", "1", "x"].includes(String(lista.activa).trim().toLowerCase());
-        const tieneAdaptador = !!ADAPTADORES_LISTAS[lista.lista_id];
+        const tieneAdaptador = !!obtenerAdaptador(lista);
 
         const card = document.createElement("div");
         card.className = "sec bg-white";
@@ -2143,7 +2154,7 @@
     // no para fetch() desde un origen distinto, así que si el navegador lo
     // bloquea (CORS), se ofrece la subida manual como respaldo.
     async function actualizarLista(lista, statusEl) {
-      const adaptador = ADAPTADORES_LISTAS[lista.lista_id];
+      const adaptador = obtenerAdaptador(lista);
       if (!adaptador) {
         statusEl.textContent = "No hay un adaptador de formato registrado para esta lista.";
         statusEl.className = "text-xs mt-2 text-red-600";
@@ -2173,7 +2184,7 @@
     // Respaldo cuando el fetch directo falla: procesa un archivo que el
     // usuario descargó a mano y lo sube con el mismo input de la tarjeta.
     async function subirArchivoLista(lista, file, statusEl) {
-      const adaptador = ADAPTADORES_LISTAS[lista.lista_id];
+      const adaptador = obtenerAdaptador(lista);
       if (!adaptador) {
         statusEl.textContent = "No hay un adaptador de formato registrado para esta lista.";
         statusEl.className = "text-xs mt-2 text-red-600";
