@@ -1202,6 +1202,37 @@
     }
 
     // -------------------------------------------------------------
+    // Sesión de Workbook: al reusar el mismo session-id en varias
+    // llamadas seguidas, Graph mantiene el Excel cargado en memoria y no
+    // lo "arranca" en cada request (esa es la causa principal de la
+    // lentitud). Se abre una sesión por operación (dura segundos, no hay
+    // riesgo de expiración a mitad) y si falla, se sigue sin sesión igual
+    // que antes: es una optimización que degrada limpiamente.
+    // -------------------------------------------------------------
+    async function abrirSesionWorkbook(workbookPath, headersBase) {
+      try {
+        const resp = await fetch(
+          GRAPH_BASE + "/me/drive/root:" + workbookPath + ":/workbook/createSession",
+          {
+            method: "POST",
+            headers: Object.assign({}, headersBase, { "Content-Type": "application/json" }),
+            body: JSON.stringify({ persistChanges: true }),
+          }
+        );
+        if (!resp.ok) return null;
+        const data = await resp.json();
+        return data.id || null;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    // Devuelve una copia de headers con el session-id (si lo hay).
+    function conSesion(headers, sesionId) {
+      return sesionId ? Object.assign({}, headers, { "workbook-session-id": sesionId }) : headers;
+    }
+
+    // -------------------------------------------------------------
     // Lectura de tbl_Personas vía Microsoft Graph (Workbook API)
     // -------------------------------------------------------------
     async function cargarPersonas() {
@@ -1211,7 +1242,13 @@
 
       try {
         const token = await obtenerToken();
-        const headers = { Authorization: "Bearer " + token };
+        const headersBase = { Authorization: "Bearer " + token };
+
+        // Abrimos una sesión y la reutilizamos en todas las llamadas de
+        // esta carga (personas + catálogos): así Graph no recarga el Excel
+        // en cada request.
+        const sesion = await abrirSesionWorkbook(WORKBOOK_PATH, headersBase);
+        const headers = conSesion(headersBase, sesion);
 
         // URL base del workbook (ruta del archivo + :/workbook)
         const wb = GRAPH_BASE +
@@ -1243,7 +1280,8 @@
         ultimaCarga = Date.now();
         actualizarTimestamp();
 
-        // Cargamos catálogos (cargos/dependencias) la primera vez.
+        // Cargamos catálogos (cargos/dependencias) la primera vez,
+        // reutilizando la misma sesión de Workbook.
         if (catCargos.length === 0 || catDeps.length === 0) {
           await cargarCatalogos(headers);
         }
@@ -2618,7 +2656,12 @@
     // CAT_Listas.
     async function escribirRegistrosLista(lista, registros) {
       const token = await obtenerToken();
-      const headers = { Authorization: "Bearer " + token, "Content-Type": "application/json" };
+      const headersBase = { Authorization: "Bearer " + token, "Content-Type": "application/json" };
+      // Una sola sesión para toda la importación (clear + N bloques +
+      // sello en CAT_Listas): sin esto, cada uno de esos ~34 requests
+      // recargaría el Excel por separado.
+      const sesion = await abrirSesionWorkbook(WORKBOOK_LISTAS_PATH, headersBase);
+      const headers = conSesion(headersBase, sesion);
       const tabla = nombreTablaDestino(lista);
       const wbTabla = GRAPH_BASE + "/me/drive/root:" + WORKBOOK_LISTAS_PATH + ":/workbook/tables/" + tabla;
 
