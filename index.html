@@ -2399,6 +2399,16 @@
       }
     }
 
+    // Formatea fecha_ultima_actualizacion para la tarjeta. Al escribirla como
+    // texto ISO, Excel la convierte en fecha real y Graph la devuelve como
+    // serial numérico (p. ej. 46204); si es número lo formateamos a dd/mm/aaaa,
+    // si es texto lo mostramos tal cual, y si viene vacío decimos "nunca".
+    function formatFechaLista(valor) {
+      if (valor === undefined || valor === null || valor === "") return "nunca";
+      if (!isNaN(valor)) return formatExcelDate(Number(valor));
+      return String(valor);
+    }
+
     function renderListasCards() {
       const cont = $("listasCards");
       cont.innerHTML = "";
@@ -2438,7 +2448,7 @@
 
         const meta = document.createElement("p");
         meta.className = "text-xs text-slate-500 mb-3";
-        meta.textContent = "Actualizado: " + (lista.fecha_ultima_actualizacion || "nunca") +
+        meta.textContent = "Actualizado: " + formatFechaLista(lista.fecha_ultima_actualizacion) +
           " · " + (lista.total_registros || 0) + " registro(s)";
         card.appendChild(meta);
 
