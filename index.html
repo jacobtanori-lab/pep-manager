@@ -2140,6 +2140,19 @@
         acciones.appendChild(btnVer);
         card.appendChild(acciones);
 
+        // Link de descarga de la fuente, justo debajo de los botones: si el
+        // fetch automático falla por CORS, el usuario abre este link, descarga
+        // el archivo y lo sube con "Subir archivo manualmente".
+        if (lista.url_fuente) {
+          const descarga = document.createElement("a");
+          descarga.href = lista.url_fuente;
+          descarga.target = "_blank";
+          descarga.rel = "noopener noreferrer";
+          descarga.className = "inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 hover:underline mt-2";
+          descarga.textContent = "↓ Descargar archivo de la fuente";
+          card.appendChild(descarga);
+        }
+
         if (!tieneAdaptador) {
           statusEl.textContent = "Sin adaptador de formato todavía: esta lista es solo de referencia.";
         }

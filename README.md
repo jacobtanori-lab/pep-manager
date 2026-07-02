@@ -111,17 +111,39 @@ No hay build tools: es HTML + JS plano. **No se requiere `npm install`.**
 
 ---
 
-## MVP actual
+## Estado actual
 
+La app se organiza en tres pestañas: **Personas**, **Catálogos** y **Listas**.
+
+### Autenticación
 - Landing con login **"Iniciar sesión con Microsoft"** (popup MSAL, con fallback a interacción).
 - Tras el login: nombre del usuario + botón **Cerrar sesión** en el header sticky.
-- Lectura de `tbl_Personas` vía Graph y render en tabla responsiva:
-  `persona_id`, `nombre_completo`, `cargo_id`, `dependencia_efectiva_id`, `estatus`, `fecha_inicio_cargo`.
 - Indicador de carga, estado vacío y manejo de errores de Graph.
+
+### Personas
+- Lectura de `tbl_Personas` vía Graph y render en tabla responsiva.
+- **CRUD completo:** alta, edición y **baja lógica (soft delete)**.
+- Formulario con validación, lógica condicional de dependencia/entidad/municipio
+  según el cargo, y campos extra para tipo PEP (Familiar/Asociado).
+- Generación automática de `persona_id`, formato forzado `dd/mm/yyyy` en fechas,
+  y control de cambios sin guardar (dirty tracking).
+- Búsqueda/filtro en vivo.
+
+### Catálogos
+- Vista de `tbl_Dependencias` y `tbl_Cargos` con subtabs y búsqueda propia.
+
+### Listas Internacionales
+- Configuración vía `CAT_Listas` con una card por lista.
+- Adaptador **OFAC SDN**: parser XML, fetch desde la fuente + respaldo por subida
+  manual del archivo, escritura por bloques a la tabla destino y visor de registros
+  con filtro.
+- Tolerancia a mayúsculas/acentos en columnas y diagnóstico de la tabla real al
+  fallar con 404.
 
 ## Próximos pasos (roadmap)
 
-- CRUD de personas (alta/edición/baja con `rows/add`, `itemAt(index)` PATCH/DELETE).
-- Vista de catálogos (`tbl_Dependencias`, `tbl_Cargos`) con joins legibles por nombre.
-- Búsqueda y filtros (por nombre, estatus, entidad federativa, tipo PEP).
-- Dashboard (conteos por estatus, vencimientos de remanencia, etc.).
+- **Dashboard** (conteos por estatus, vencimientos de remanencia, etc.).
+- Joins legibles por nombre en catálogos y filtros avanzados (entidad federativa,
+  tipo PEP).
+- Más adaptadores de listas (**ONU, UE**): la arquitectura ya lo soporta; por ahora
+  solo OFAC SDN está codificado.
