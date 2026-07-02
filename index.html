@@ -639,6 +639,7 @@
       ONU: parseONU,
       UE: parseUE,
       SAT_69B: parseSAT69B,
+      UK: parseUKSanctions,
     };
 
     // SINGLE SOURCE OF TRUTH: orden lógico de columnas de tbl_Personas.
@@ -2745,7 +2746,7 @@
         if (!rfc) continue; // filas vacías o de relleno al final
         const situacion = celda(f, iSituacion);
         registros.push({
-          registro_id: "SAT69B-" + rfc,
+          registro_id: rfc,
           lista_origen: "SAT_69B",
           // RFC de 13 caracteres = persona física; 12 = persona moral.
           tipo_sujeto: rfc.length === 13 ? "Persona" : "Entidad",
@@ -2766,6 +2767,94 @@
         throw new Error("El CSV del SAT se leyó pero no se encontraron contribuyentes con RFC.");
       }
       return registros;
+    }
+
+    // ---- Adaptador: XML de la UK Sanctions List (FCDO / OFSI) ----
+    // Fuente oficial estable: https://sanctionslist.fcdo.gov.uk/docs/UK-Sanctions-List.xml
+    // Raíz <Designations> sin namespace, una <Designation> por sujeto. El tipo
+    // vive en <IndividualEntityShip> (Individual/Entity/Ship). El nombre se
+    // arma con las partes <Name1>..<Name6> del <Name> marcado como
+    // "Primary Name"; nacionalidad y fechas de nacimiento cuelgan de
+    // <IndividualDetails><Individual>. Si un día devuelve 0 registros, el
+    // Reino Unido cambió el esquema y hay que revisar esta función.
+    function parseUKSanctions(xmlText) {
+      const doc = new DOMParser().parseFromString(xmlText, "application/xml");
+      if (doc.getElementsByTagName("parsererror").length > 0) {
+        throw new Error("El XML de la lista del Reino Unido no se pudo interpretar (formato inesperado).");
+      }
+
+      const entradas = Array.from(doc.getElementsByTagName("Designation"));
+      if (entradas.length === 0) {
+        throw new Error("No se encontraron entradas <Designation> en el XML. El esquema del Reino Unido pudo haber cambiado.");
+      }
+
+      const hijoDir = (el, tag) => {
+        for (let i = 0; i < el.children.length; i++) {
+          if (el.children[i].tagName === tag) return el.children[i];
+        }
+        return null;
+      };
+      const texto = (el, tag) => {
+        if (!el) return "";
+        const n = el.getElementsByTagName(tag)[0];
+        return n ? n.textContent.trim() : "";
+      };
+      const textoDir = (el, tag) => {
+        const n = hijoDir(el, tag);
+        return n ? n.textContent.trim() : "";
+      };
+
+      const mapTipo = (t) =>
+        t === "Individual" ? "Persona" :
+        (t === "Entity" ? "Entidad" :
+        (t === "Ship" ? "Embarcación" : (t || "Desconocido")));
+
+      // Nombre completo = concatenación de las partes Name1..Name6 no vacías.
+      const nombreDe = (nameEl) =>
+        ["Name1", "Name2", "Name3", "Name4", "Name5", "Name6"]
+          .map((t) => texto(nameEl, t)).filter(Boolean).join(" ").trim();
+
+      return entradas.map((d) => {
+        const uid = textoDir(d, "UniqueID");
+
+        // El nombre principal es el <Name> con NameType "Primary Name"; el
+        // resto (Alias, "Primary Name Variation"…) va a la columna de alias.
+        const namesCont = hijoDir(d, "Names");
+        const nameEls = namesCont ? Array.from(namesCont.getElementsByTagName("Name")) : [];
+        let principal = "";
+        const alias = [];
+        nameEls.forEach((n) => {
+          const nombre = nombreDe(n);
+          if (!nombre) return;
+          if (!principal && texto(n, "NameType").toLowerCase() === "primary name") principal = nombre;
+          else alias.push(nombre);
+        });
+        if (!principal && nameEls.length) principal = nombreDe(nameEls[0]);
+
+        // Nacionalidades y fechas de nacimiento cuelgan de Individual.
+        const det = hijoDir(d, "IndividualDetails");
+        const indiv = det ? hijoDir(det, "Individual") : null;
+        const nacionalidad = indiv
+          ? Array.from(indiv.getElementsByTagName("Nationality")).map((n) => n.textContent.trim()).filter(Boolean).join("; ")
+          : "";
+        const fechasNac = indiv
+          ? Array.from(indiv.getElementsByTagName("DOB")).map((n) => n.textContent.trim()).filter(Boolean).join("; ")
+          : "";
+
+        return {
+          registro_id: "UK-" + uid,
+          lista_origen: "UK",
+          tipo_sujeto: mapTipo(textoDir(d, "IndividualEntityShip")),
+          nombre_principal: principal || "(sin nombre)",
+          alias: [...new Set(alias)].join("; "),
+          nacionalidad: nacionalidad,
+          fecha_nacimiento: fechasNac,
+          id_original: uid,
+          programa_motivo: textoDir(d, "RegimeName"),
+          fecha_fuente: textoDir(d, "DateDesignated"),
+          notas: textoDir(d, "SanctionsImposed"),
+        };
+      });
     }
   </script>
 </body>
