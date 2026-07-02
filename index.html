@@ -636,6 +636,7 @@
     // es nuevo, se agrega aquí una función más.
     const ADAPTADORES_LISTAS = {
       OFAC_SDN: parseOFAC_SDN,
+      OFAC_NONSDN: parseOFAC_NONSDN,
       ONU: parseONU,
       UE: parseUE,
       SAT_69B: parseSAT69B,
@@ -2447,12 +2448,16 @@
         (q ? " (filtrados de " + registrosListaActual.filas.length + ")" : "");
     }
 
-    // ---- Adaptador: XML de la lista SDN de OFAC (Tesoro de EE.UU.) ----
-    // Esquema verificado contra el archivo real de OFAC (jul-2026): raíz
-    // <sdnList> con namespace por defecto, una entrada <sdnEntry> por
-    // persona/entidad. Si un día devuelve 0 registros, es que OFAC cambió
-    // el esquema y hay que revisar los nombres de tag de esta función.
-    function parseOFAC_SDN(xmlText) {
+    // ---- Adaptador base: XML de OFAC (Tesoro de EE.UU.) ----
+    // Sirve tanto para la lista SDN como para la Consolidada (Non-SDN): ambas
+    // usan EXACTAMENTE el mismo formato legacy — raíz <sdnList> con namespace
+    // por defecto y una entrada <sdnEntry> por persona/entidad. Solo cambian
+    // el origen y el prefijo del registro_id, que llegan por `opts`. Esquema
+    // verificado contra los archivos reales de OFAC (jul-2026). Si un día
+    // devuelve 0 registros, OFAC cambió el esquema y hay que revisar los tags.
+    function parseOFAC(xmlText, opts) {
+      const origen = (opts && opts.origen) || "OFAC_SDN";
+      const prefijo = (opts && opts.prefijo) || "OFAC-";
       const doc = new DOMParser().parseFromString(xmlText, "application/xml");
       if (doc.getElementsByTagName("parsererror").length > 0) {
         throw new Error("El XML de OFAC no se pudo interpretar (formato inesperado).");
@@ -2506,8 +2511,8 @@
         const nombre = [directo(entry, "firstName"), directo(entry, "lastName")].filter(Boolean).join(" ");
 
         return {
-          registro_id: "OFAC-" + uid,
-          lista_origen: "OFAC_SDN",
+          registro_id: prefijo + uid,
+          lista_origen: origen,
           tipo_sujeto: mapTipo(directo(entry, "sdnType")),
           nombre_principal: nombre || "(sin nombre)",
           alias: alias,
@@ -2518,6 +2523,16 @@
           notas: directo(entry, "remarks"),
         };
       });
+    }
+
+    // Lista SDN (Specially Designated Nationals).
+    function parseOFAC_SDN(xmlText) {
+      return parseOFAC(xmlText, { origen: "OFAC_SDN", prefijo: "OFAC-" });
+    }
+    // Lista Consolidada (Non-SDN): mismo formato, distinto origen/prefijo para
+    // no confundir sus registros con los de la SDN.
+    function parseOFAC_NONSDN(xmlText) {
+      return parseOFAC(xmlText, { origen: "OFAC_NONSDN", prefijo: "OFAC-NS-" });
     }
 
     // ---- Adaptador: XML de la Lista Consolidada del Consejo de Seguridad ONU ----
