@@ -2030,6 +2030,18 @@
       }
     }
 
+    // Neutraliza celdas que Excel interpretaría como fórmula. Un valor que
+    // empieza con = + - @ (p. ej. "====" en un remark de la UE) hace que
+    // rows/add falle con "The argument is invalid or missing or has an
+    // incorrect format" y se pierda el bloque completo. Un apóstrofo inicial
+    // la fuerza a texto (y, sobre todo, deja de empezar con "="). Vale para
+    // cualquier lista, no solo la UE.
+    function celdaSegura(v) {
+      if (v === undefined || v === null) return "";
+      const s = String(v);
+      return (s && "=+-@".indexOf(s[0]) !== -1) ? "'" + s : s;
+    }
+
     // Carga CAT_Listas y dibuja una tarjeta por cada lista configurada.
     async function cargarListasConfig() {
       $("listasLoading").classList.remove("hidden");
@@ -2299,11 +2311,10 @@
           const i = idx[col];
           if (i === undefined) return;
           if (col === "fecha_captura") { arr[i] = hoy; return; }
-          if (col === "fecha_fuente") { arr[i] = reg.fecha_fuente || hoy; return; }
-          if (col === "estatus") { arr[i] = reg.estatus || "Activo"; return; }
-          if (col === "lista_origen") { arr[i] = reg.lista_origen || lista.lista_id; return; }
-          const v = reg[col];
-          arr[i] = (v === undefined || v === null) ? "" : v;
+          if (col === "fecha_fuente") { arr[i] = celdaSegura(reg.fecha_fuente || hoy); return; }
+          if (col === "estatus") { arr[i] = celdaSegura(reg.estatus || "Activo"); return; }
+          if (col === "lista_origen") { arr[i] = celdaSegura(reg.lista_origen || lista.lista_id); return; }
+          arr[i] = celdaSegura(reg[col]);
         });
         return arr;
       });
