@@ -2552,19 +2552,37 @@
       });
     }
 
-    // URL del "espejo" en GitHub Pages (mismo origen -> sin CORS). Lo
-    // genera el GitHub Action .github/workflows/mirror-sanctions.yml, que
-    // guarda cada fuente en data/<lista_id>.<formato>. Devuelve null si no
-    // se puede componer (falta lista_id o formato).
-    function mirrorUrlDe(lista) {
+    // URLs del "espejo" en GitHub Pages (mismo origen -> sin CORS), que
+    // genera el GitHub Action. Devuelve DOS candidatos, en orden de
+    // preferencia: primero la copia comprimida (data/<id>.<fmt>.gz, que es
+    // lo que el workflow guarda para no inflar el repo), y luego la copia
+    // sin comprimir (data/<id>.<fmt>) por si el workflow aún no migró a gz.
+    // Así la migración es sin cortes: siempre funciona el que exista.
+    function mirrorUrlsDe(lista) {
       const id = String(lista.lista_id || "").trim();
       const ext = String(lista.formato || "").trim().toLowerCase();
-      if (!id || !ext) return null;
+      if (!id || !ext) return [];
       try {
-        return new URL("data/" + id + "." + ext, window.location.href).href;
+        const base = new URL("data/" + id + "." + ext, window.location.href).href;
+        return [base + ".gz", base];
       } catch (_) {
-        return null;
+        return [];
       }
+    }
+
+    // Descomprime un ArrayBuffer si viene en gzip (lo detecta por los "magic
+    // bytes" 0x1f 0x8b). Si no es gzip, lo devuelve tal cual — así se puede
+    // aplicar a cualquier descarga sin saber de antemano si está comprimida
+    // (el espejo va gzip; la fuente directa, no).
+    async function talvezGunzip(arrayBuffer) {
+      const bytes = new Uint8Array(arrayBuffer);
+      const esGzip = bytes.length > 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
+      if (!esGzip) return arrayBuffer;
+      if (typeof DecompressionStream === "undefined") {
+        throw new Error("Este navegador no soporta descompresión gzip (DecompressionStream).");
+      }
+      const stream = new Response(arrayBuffer).body.pipeThrough(new DecompressionStream("gzip"));
+      return await new Response(stream).arrayBuffer();
     }
 
     // Actualiza una lista descargando su archivo. Orden de intento:
@@ -2580,8 +2598,9 @@
       }
 
       const candidatos = [];
-      const espejo = mirrorUrlDe(lista);
-      if (espejo) candidatos.push({ url: espejo, tipo: "espejo (GitHub Pages)" });
+      mirrorUrlsDe(lista).forEach((u, i) => {
+        candidatos.push({ url: u, tipo: i === 0 ? "espejo comprimido" : "espejo (GitHub Pages)" });
+      });
       if (lista.url_fuente) candidatos.push({ url: lista.url_fuente, tipo: "fuente original" });
 
       if (candidatos.length === 0) {
@@ -2600,7 +2619,8 @@
         try {
           const resp = await fetch(cand.url, { cache: "no-store" });
           if (!resp.ok) throw new Error(cand.tipo + " respondió " + resp.status);
-          texto = decodificarBuffer(await resp.arrayBuffer());
+          const buf = await talvezGunzip(await resp.arrayBuffer());
+          texto = decodificarBuffer(buf);
           break;
         } catch (err) {
           console.warn("Descarga falló (" + cand.tipo + ") para " + lista.lista_id + ":", err);
