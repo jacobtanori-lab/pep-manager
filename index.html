@@ -733,10 +733,12 @@
       // no-SDN). Filtra internamente las filas de SDN para no duplicar
       // tbl_OFAC_SDN.
       CSL: parseCSL,
-      // OpenSanctions: adaptador genérico de su CSV "simple". Si más
-      // adelante se agrega otro dataset suyo, se registra aquí con su
-      // propio lista_id apuntando a la misma función.
-      INTERPOL: parseOpenSanctionsSimple,
+      // OpenSanctions: todas usan el MISMO adaptador genérico de su CSV
+      // "simple" (mismos 16 encabezados). Agregar otro dataset suyo = una
+      // llave más aquí + su fila en CAT_Listas; no requiere código nuevo.
+      // Ninguna se espeja (ver nota de licencia en parseOpenSanctionsSimple).
+      INTERPOL: parseOpenSanctionsSimple,  // Interpol Red Notices (~6,405)
+      DEA: parseOpenSanctionsSimple,       // US DEA Fugitives (~536)
     };
 
     // SINGLE SOURCE OF TRUTH: orden lógico de columnas de tbl_Personas.
