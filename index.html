@@ -729,6 +729,10 @@
       UE: parseUE,
       SAT_69B: parseSAT69B,
       UK: parseUKSanctions,
+      // OpenSanctions: adaptador genérico de su CSV "simple". Si más
+      // adelante se agrega otro dataset suyo, se registra aquí con su
+      // propio lista_id apuntando a la misma función.
+      INTERPOL: parseOpenSanctionsSimple,
     };
 
     // SINGLE SOURCE OF TRUTH: orden lógico de columnas de tbl_Personas.
@@ -3213,6 +3217,79 @@
       }
       if (registros.length === 0) {
         throw new Error("El CSV del SAT se leyó pero no se encontraron contribuyentes con RFC.");
+      }
+      return registros;
+    }
+
+    // ---- Adaptador: CSV "simple" de OpenSanctions ----
+    // Formato estándar de OpenSanctions (targets.simple.csv), verificado
+    // contra el dataset de Interpol Red Notices (jul-2026). Encabezados:
+    //   id,schema,name,aliases,birth_date,countries,addresses,identifiers,
+    //   sanctions,phones,emails,program_ids,dataset,first_seen,last_seen,last_change
+    // Es su formato genérico, así que este mismo adaptador sirve para
+    // CUALQUIER dataset de OpenSanctions: basta registrarlo con otro
+    // lista_id en ADAPTADORES_LISTAS. Por eso NO fija lista_origen: lo
+    // hereda del lista_id de CAT_Listas.
+    //
+    // IMPORTANTE: estas listas NO se espejan en data/ a propósito. El dato
+    // es de OpenSanctions bajo licencia CC-BY-NC y republicarlo en el repo
+    // público sería redistribuirlo (las de gobierno —OFAC/ONU/UE/UK/SAT— sí
+    // se espejan porque son de dominio público). Por eso OpenSanctions NO
+    // va en sanctions-sources.json: se carga con "Subir archivo
+    // manualmente", o por fetch directo si la fuente permite CORS.
+    function parseOpenSanctionsSimple(textoCrudo) {
+      const filas = parseCSV(textoCrudo);
+      if (filas.length < 2) {
+        throw new Error("El CSV de OpenSanctions vino vacío o sin filas de datos.");
+      }
+
+      // Mapa encabezado -> índice (normalizado por si cambia la caja).
+      const col = {};
+      filas[0].forEach((h, i) => { col[normalizarCol(h)] = i; });
+      if (col["id"] === undefined || col["name"] === undefined) {
+        throw new Error("El CSV no trae las columnas esperadas de OpenSanctions (id, name). ¿Cambió el formato?");
+      }
+
+      const celda = (f, nombre) => {
+        const i = col[nombre];
+        return (i === undefined || f[i] === undefined) ? "" : String(f[i]).trim();
+      };
+
+      const registros = [];
+      for (let n = 1; n < filas.length; n++) {
+        const f = filas[n];
+        if (!f.length || f.every((c) => c === "")) continue; // fila vacía final
+        const id = celda(f, "id");
+        if (!id) continue;
+
+        // schema de OpenSanctions: Person, Company, Organization, LegalEntity…
+        const esquema = celda(f, "schema");
+
+        // Datos útiles para identificar a la persona que no tienen columna
+        // propia en COLUMNAS_LISTA.
+        const ids = celda(f, "identifiers");
+        const dirs = celda(f, "addresses");
+        const notas = [
+          ids ? "IDs: " + ids : "",
+          dirs ? "Dir: " + dirs : "",
+        ].filter(Boolean).join(" | ");
+
+        registros.push({
+          registro_id: id,
+          tipo_sujeto: esquema === "Person" ? "Persona" : (esquema ? "Entidad" : "Desconocido"),
+          nombre_principal: celda(f, "name") || "(sin nombre)",
+          alias: celda(f, "aliases"),
+          nacionalidad: celda(f, "countries"),
+          fecha_nacimiento: celda(f, "birth_date"),
+          id_original: id,
+          programa_motivo: celda(f, "sanctions"),
+          fecha_fuente: celda(f, "last_change") || celda(f, "first_seen"),
+          notas: notas,
+        });
+      }
+
+      if (registros.length === 0) {
+        throw new Error("El CSV de OpenSanctions se leyó pero no se encontró ningún registro con id.");
       }
       return registros;
     }
