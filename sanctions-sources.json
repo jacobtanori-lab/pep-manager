@@ -28,5 +28,10 @@
     "lista_id": "SAT_69B",
     "file": "SAT_69B.csv",
     "url": "https://wu1agsprosta001.blob.core.windows.net/agsc-publicaciones/Datos_abiertos/Documents_AGAFF/Listado_completo_69-B.csv"
+  },
+  {
+    "lista_id": "CSL",
+    "file": "CSL.csv",
+    "url": "https://data.trade.gov/downloadable_consolidated_screening_list/v1/consolidated.csv"
   }
 ]

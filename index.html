@@ -729,6 +729,10 @@
       UE: parseUE,
       SAT_69B: parseSAT69B,
       UK: parseUKSanctions,
+      // Consolidated Screening List de EE. UU. (BIS + State + Treasury
+      // no-SDN). Filtra internamente las filas de SDN para no duplicar
+      // tbl_OFAC_SDN.
+      CSL: parseCSL,
       // OpenSanctions: adaptador genérico de su CSV "simple". Si más
       // adelante se agrega otro dataset suyo, se registra aquí con su
       // propio lista_id apuntando a la misma función.
@@ -3290,6 +3294,110 @@
 
       if (registros.length === 0) {
         throw new Error("El CSV de OpenSanctions se leyó pero no se encontró ningún registro con id.");
+      }
+      return registros;
+    }
+
+    // ---- Adaptador: CSV de la Consolidated Screening List (EE. UU.) ----
+    // Fuente oficial (dominio público, Dept. of Commerce / ITA):
+    // https://data.trade.gov/downloadable_consolidated_screening_list/v1/consolidated.csv
+    // La CSL consolida ~12 listas de BIS, Treasury y State Department.
+    //
+    // FILTRA LAS FILAS DE SDN a propósito: son el 74% del archivo (19,217 de
+    // 25,918) y ya se cargan desde su fuente original (el XML de OFAC) en
+    // tbl_OFAC_SDN. Duplicarlas haría que cada sancionado de OFAC apareciera
+    // dos veces en el screening. Aquí quedan las ~6,700 restantes: BIS
+    // (Entity List, Denied Persons, Unverified, MEU), State (ITAR Debarred,
+    // ISN) y las de Treasury distintas de SDN (SSI, CMIC, PLC, NS-MBS, CAPTA).
+    //
+    // OJO con tipo_sujeto: la CSL solo llena la columna `type` en las listas
+    // del Treasury. Para BIS y State viene VACÍA (6,256 registros), y esos
+    // tampoco traen fecha de nacimiento ni nacionalidad, así que NO hay forma
+    // de saber si es persona o empresa — el Entity List mezcla ambas (p. ej.
+    // "Abdul Satar Ghoura" es persona y "Semiconductor Systems Intl." no).
+    // Se deja "Desconocido" en vez de adivinar: inventar el dato en un
+    // sistema de cumplimiento sería peor que no tenerlo. El screening empata
+    // por nombre, así que no se pierde cobertura.
+    function parseCSL(textoCrudo) {
+      const filas = parseCSV(textoCrudo);
+      if (filas.length < 2) throw new Error("El CSV de la CSL vino vacío o sin filas de datos.");
+
+      const col = {};
+      filas[0].forEach((h, i) => { col[normalizarCol(h)] = i; });
+      if (col["source"] === undefined || col["name"] === undefined) {
+        throw new Error("El CSV no trae las columnas esperadas de la CSL (source, name). ¿Cambió el formato?");
+      }
+
+      const celda = (f, nombre) => {
+        const i = col[nombre];
+        return (i === undefined || f[i] === undefined) ? "" : String(f[i]).trim();
+      };
+
+      const mapTipo = (t) => {
+        if (!t) return "Desconocido"; // BIS/State no llenan esta columna
+        if (t === "Individual") return "Persona";
+        if (t === "Entity") return "Entidad";
+        if (t === "Vessel") return "Embarcación";
+        if (t === "Aircraft") return "Aeronave";
+        return t;
+      };
+
+      const hoy = hoyISO();
+      const registros = [];
+      for (let n = 1; n < filas.length; n++) {
+        const f = filas[n];
+        if (!f.length || f.every((c) => c === "")) continue;
+
+        const fuente = celda(f, "source");
+        if (!fuente) continue;
+        if (/Specially Designated Nationals/i.test(fuente)) continue; // ya está en tbl_OFAC_SDN
+
+        const nombre = celda(f, "name");
+        if (!nombre) continue;
+
+        const id = celda(f, "_id") || celda(f, "entity_number");
+        const programas = celda(f, "programs");
+
+        // Un end_date ya vencido = la designación expiró (hay denials del DPL
+        // que terminaron hace décadas). Marcarlos "Activo" daría falsos
+        // positivos. Las fechas vienen ISO, así que comparan bien como texto.
+        const fin = celda(f, "end_date");
+        const estatus = (fin && fin < hoy) ? "Histórico" : "Activo";
+
+        // Para BIS lo relevante no son los "programas" sino el requisito de
+        // licencia y la política de revisión: esa es la consecuencia legal.
+        const lic = celda(f, "license_requirement");
+        const pol = celda(f, "license_policy");
+        const fr = celda(f, "federal_register_notice");
+        const dirs = celda(f, "addresses");
+        const notas = [
+          celda(f, "remarks"),
+          lic ? "Licencia: " + lic : "",
+          pol ? "Política: " + pol : "",
+          fr ? "Federal Register: " + fr : "",
+          fin ? "Vigencia hasta: " + fin : "",
+          dirs ? "Dir: " + dirs : "",
+        ].filter(Boolean).join(" | ");
+
+        registros.push({
+          registro_id: id || ("CSL-" + n),
+          tipo_sujeto: mapTipo(celda(f, "type")),
+          nombre_principal: nombre,
+          alias: celda(f, "alt_names"),
+          nacionalidad: celda(f, "nationalities") || celda(f, "citizenships"),
+          fecha_nacimiento: celda(f, "dates_of_birth"),
+          id_original: celda(f, "entity_number") || id,
+          // La sub-lista importa legalmente (no es lo mismo Entity List que
+          // Denied Persons), por eso va en la columna visible del visor.
+          programa_motivo: fuente + (programas ? " — " + programas : ""),
+          fecha_fuente: celda(f, "start_date"),
+          estatus: estatus,
+          notas: notas,
+        });
+      }
+
+      if (registros.length === 0) {
+        throw new Error("El CSV de la CSL se leyó pero no quedó ningún registro tras filtrar la SDN.");
       }
       return registros;
     }
