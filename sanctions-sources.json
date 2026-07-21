@@ -33,5 +33,10 @@
     "lista_id": "CSL",
     "file": "CSL.csv",
     "url": "https://data.trade.gov/downloadable_consolidated_screening_list/v1/consolidated.csv"
+  },
+  {
+    "lista_id": "SFP",
+    "file": "SFP.csv",
+    "url": "https://repodatos.atdt.gob.mx/api_update/sabg/servidores_publicos_sancionados_vigentes/servidores_sancionados_marzo.csv"
   }
 ]

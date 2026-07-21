@@ -733,6 +733,8 @@
       // no-SDN). Filtra internamente las filas de SDN para no duplicar
       // tbl_OFAC_SDN.
       CSL: parseCSL,
+      // Servidores públicos sancionados vigentes (SFP/SABG, federal, ~474).
+      SFP: parseSFPSancionados,
       // OpenSanctions: todas usan el MISMO adaptador genérico de su CSV
       // "simple" (mismos 16 encabezados). Agregar otro dataset suyo = una
       // llave más aquí + su fila en CAT_Listas; no requiere código nuevo.
@@ -3401,6 +3403,82 @@
 
       if (registros.length === 0) {
         throw new Error("El CSV de la CSL se leyó pero no quedó ningún registro tras filtrar la SDN.");
+      }
+      return registros;
+    }
+
+    // ---- Adaptador: CSV de Servidores Públicos Sancionados (SFP/SABG) ----
+    // Fuente oficial (dominio público, CC-BY-4.0, Secretaría Anticorrupción
+    // y Buen Gobierno) vía datos.gob.mx:
+    //   https://repodatos.atdt.gob.mx/api_update/sabg/servidores_publicos_sancionados_vigentes/servidores_sancionados_marzo.csv
+    // OJO: el nombre del archivo trae el mes ("...marzo.csv") y puede rotar
+    // al actualizarse. La URL vigente siempre está en la API CKAN:
+    //   datos.gob.mx/api/3/action/package_show?id=servidores_publicos_sancionados_vigentes
+    // Si el espejo empieza a fallar (404), actualizar la URL en CAT_Listas
+    // y en sanctions-sources.json con la que devuelva esa API.
+    //
+    // Es el registro FEDERAL de la SFP (servidores públicos sancionados
+    // vigentes, ~474). NO incluye sanciones estatales ni a particulares —
+    // esos viven en el sistema federado S3 de la PDN (fragmentado por
+    // estado, sin descarga oficial única). CSV plano UTF-8; todos son
+    // personas físicas. Fechas ISO con "T00:00:00" → se recorta la fecha.
+    function parseSFPSancionados(textoCrudo) {
+      const filas = parseCSV(textoCrudo);
+      if (filas.length < 2) throw new Error("El CSV del SFP vino vacío o sin filas de datos.");
+
+      const col = {};
+      filas[0].forEach((h, i) => { col[normalizarCol(h)] = i; });
+      if (col["nombre"] === undefined || col["expediente"] === undefined) {
+        throw new Error("El CSV no trae las columnas esperadas del SFP (expediente, nombre). ¿Cambió el formato?");
+      }
+
+      const celda = (f, nombre) => {
+        const i = col[nombre];
+        return (i === undefined || f[i] === undefined) ? "" : String(f[i]).trim();
+      };
+      const soloFecha = (s) => s ? s.split("T")[0] : "";
+
+      const hoy = hoyISO();
+      const registros = [];
+      for (let n = 1; n < filas.length; n++) {
+        const f = filas[n];
+        if (!f.length || f.every((c) => c === "")) continue;
+
+        const nombre = [celda(f, "nombre"), celda(f, "apellido_paterno"), celda(f, "apellido_materno")]
+          .filter(Boolean).join(" ").trim();
+        if (!nombre) continue;
+
+        const exp = celda(f, "expediente");
+        const fin = soloFecha(celda(f, "fin"));
+        const inicio = soloFecha(celda(f, "inicio"));
+        // El dataset es de "vigentes", pero si la inhabilitación ya venció
+        // la marcamos Histórico para no dar falsos positivos.
+        const estatus = (fin && fin < hoy) ? "Histórico" : "Activo";
+
+        const notas = [
+          celda(f, "autoridad") ? "Autoridad: " + celda(f, "autoridad") : "",
+          celda(f, "dependencia") ? "Dependencia: " + celda(f, "dependencia") : "",
+          celda(f, "ley") ? "Ley: " + celda(f, "ley") : "",
+          (inicio || fin) ? "Vigencia: " + inicio + " a " + fin : "",
+        ].filter(Boolean).join(" | ");
+
+        registros.push({
+          registro_id: (exp || "row") + "-" + n, // expediente puede repetirse
+          tipo_sujeto: "Persona", // todos son servidores públicos (personas físicas)
+          nombre_principal: nombre,
+          alias: "",
+          nacionalidad: "",
+          fecha_nacimiento: "",
+          id_original: exp,
+          programa_motivo: [celda(f, "sancion_impuesta"), celda(f, "causa")].filter(Boolean).join(" — "),
+          fecha_fuente: soloFecha(celda(f, "fecha_resolucion")),
+          estatus: estatus,
+          notas: notas,
+        });
+      }
+
+      if (registros.length === 0) {
+        throw new Error("El CSV del SFP se leyó pero no se encontró ningún registro con nombre.");
       }
       return registros;
     }
