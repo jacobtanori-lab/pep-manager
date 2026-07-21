@@ -742,6 +742,12 @@
       INTERPOL: parseOpenSanctionsSimple,  // Interpol Red Notices (~6,405)
       DEA: parseOpenSanctionsSimple,       // US DEA Fugitives (~536)
       FBI: parseOpenSanctionsSimple,       // US FBI Most Wanted (~481)
+      // Bancos multilaterales de desarrollo. Por el acuerdo de
+      // inhabilitación cruzada (BM/BID/AfDB/ADB/EBRD se reconocen las
+      // sanciones entre sí), una misma empresa puede aparecer en ambas
+      // listas: es correcto, no es duplicado a corregir.
+      BM: parseOpenSanctionsSimple,        // World Bank Debarred (~1,409)
+      BID: parseOpenSanctionsSimple,       // BID / IADB Sanctioned (~1,130)
     };
 
     // SINGLE SOURCE OF TRUTH: orden lógico de columnas de tbl_Personas.
