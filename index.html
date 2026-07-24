@@ -36,6 +36,24 @@
       cursor:col-resize; user-select:none; touch-action:none;
     }
     .col-resizer:hover, .col-resizer.activo { background:#3b82f6; opacity:0.4; }
+
+    /* La columna de acciones queda ANCLADA a la derecha: aunque la tabla sea
+       más ancha que la pantalla y haya scroll horizontal, los botones
+       ver/editar/eliminar siempre se ven, sin tener que ajustar nada. */
+    #tablaPersonas th:last-child,
+    #tablaPersonas td:last-child {
+      position: sticky; right: 0; z-index: 3;
+      background: inherit;            /* toma el color de la fila */
+      box-shadow: -6px 0 6px -4px rgba(15,23,42,0.12);
+    }
+    /* El encabezado combina sticky vertical (ya existente) con el horizontal. */
+    #tablaPersonas thead th:last-child { z-index: 6; background: #f1f5f9; }
+    /* Las filas necesitan fondo OPACO propio: si no, el contenido se vería
+       pasar por debajo de la celda anclada. */
+    #tablaPersonas tbody tr { background: #ffffff; }
+    #tablaPersonas tbody tr:nth-child(even) { background: #f8fafc; }
+    /* Se re-declara el hover porque estas reglas por id ganan al de Tailwind. */
+    #tablaPersonas tbody tr:hover { background: #eff6ff; }
   </style>
 </head>
 
@@ -723,6 +741,16 @@
         <button id="btnCerrarModalVer" type="button"
           class="text-slate-400 hover:text-slate-700 text-2xl leading-none px-1">&times;</button>
       </div>
+      <!-- Fotografía en grande + atribución (el propósito del botón 👁️ es
+           poder ver bien la foto, así que va más grande que en el formulario). -->
+      <div id="modalVerFoto" class="hidden px-5 pt-5 flex items-start gap-4">
+        <img id="modalVerImg" alt="Fotografía de la persona"
+          class="w-40 h-52 object-cover rounded-lg border border-slate-300 bg-slate-100" />
+        <div class="text-xs text-slate-500 leading-relaxed">
+          <div class="font-medium text-slate-700 mb-0.5">Fotografía</div>
+          <div id="modalVerCredito"></div>
+        </div>
+      </div>
       <div id="modalVerBody" class="p-5 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 max-h-[70vh] overflow-auto"></div>
       <div class="px-5 py-3 border-t border-slate-200 flex justify-end gap-2">
         <button id="btnEditarDesdeVer" type="button"
@@ -1330,6 +1358,32 @@
       tabla.dataset.resizable = "1";
     }
 
+    // Los anchos se congelan en píxeles al primer render, así que si cambia
+    // el tamaño de la ventana la tabla deja de caber. Esto suelta ese
+    // congelado para que los porcentajes vuelvan a repartir el espacio, y
+    // luego lo vuelve a fijar con las medidas nuevas.
+    function reajustarColumnas() {
+      const tabla = $("tablaPersonas");
+      if (!tabla || tabla.dataset.resizable !== "1") return;
+      tabla.style.width = "";
+      if (tabla.tHead && tabla.tHead.rows.length) {
+        Array.from(tabla.tHead.rows[0].cells).forEach((th) => {
+          th.style.width = "";
+          const t = th.querySelector(".col-resizer");
+          if (t) t.remove();
+        });
+      }
+      tabla.classList.remove("tabla-resizable");
+      delete tabla.dataset.resizable;
+      habilitarResizeColumnas(tabla);
+    }
+
+    let temporizadorReajuste = null;
+    window.addEventListener("resize", () => {
+      clearTimeout(temporizadorReajuste);
+      temporizadorReajuste = setTimeout(reajustarColumnas, 200);
+    });
+
     function iniciarResize(e, th, tabla, tirador) {
       e.preventDefault();
       const startX = e.pageX;
@@ -1752,18 +1806,19 @@
       return partes.join(" · ");
     }
 
-    // Pinta (o esconde) el bloque de foto del formulario de detalle.
-    async function mostrarFotoDetalle(personaId) {
-      const bloque = $("fotoBloque");
-      const img = $("fotoImg");
-      const credito = $("fotoCredito");
+    // Pinta (o esconde) un bloque de foto. Sirve para el formulario de
+    // detalle y para el modal del botón 👁️, que usan los mismos datos.
+    async function pintarFoto(personaId, idBloque, idImg, idCredito) {
+      const bloque = $(idBloque);
+      const img = $(idImg);
+      const credito = $(idCredito);
       bloque.classList.add("hidden");
       img.removeAttribute("src");
       credito.textContent = "";
 
       await asegurarManifiestoFotos();
       const info = fotosManifiesto[String(personaId || "").trim()];
-      if (!info) return; // sin foto: no se muestra el bloque
+      if (!info) return; // sin foto: el bloque no se muestra
 
       const url = await obtenerFotoURL(personaId);
       if (!url) return;
@@ -1780,6 +1835,13 @@
         credito.appendChild(a);
       }
       bloque.classList.remove("hidden");
+    }
+
+    function mostrarFotoDetalle(personaId) {
+      return pintarFoto(personaId, "fotoBloque", "fotoImg", "fotoCredito");
+    }
+    function mostrarFotoModal(personaId) {
+      return pintarFoto(personaId, "modalVerFoto", "modalVerImg", "modalVerCredito");
     }
 
     // Miniatura para la tabla de resultados. Solo pide la imagen si el
@@ -2250,6 +2312,9 @@
         campo.appendChild(v);
         body.appendChild(campo);
       });
+
+      // Foto en grande + crédito (asíncrono, no retrasa la apertura).
+      mostrarFotoModal(pid);
 
       $("modalVer").classList.remove("hidden");
     }
