@@ -271,14 +271,15 @@
           <table id="tablaPersonas" class="w-full text-sm table-fixed">
             <thead>
               <tr class="sticky top-0 z-10 bg-slate-100 text-left text-slate-700">
-                <th class="px-3 py-2.5 font-semibold w-[10%]">persona_id</th>
-                <th class="px-3 py-2.5 font-semibold w-[26%]">nombre_completo</th>
+                <th class="px-2 py-2.5 font-semibold w-[6%] text-center">foto</th>
+                <th class="px-3 py-2.5 font-semibold w-[9%]">persona_id</th>
+                <th class="px-3 py-2.5 font-semibold w-[22%]">nombre_completo</th>
                 <th class="px-3 py-2.5 font-semibold w-[12%]">cargo</th>
-                <th class="px-3 py-2.5 font-semibold w-[18%]">dependencia</th>
-                <th class="px-3 py-2.5 font-semibold w-[10%]">inicio</th>
-                <th class="px-3 py-2.5 font-semibold w-[10%]">fin proyectada</th>
+                <th class="px-3 py-2.5 font-semibold w-[17%]">dependencia</th>
+                <th class="px-3 py-2.5 font-semibold w-[9%]">inicio</th>
+                <th class="px-3 py-2.5 font-semibold w-[9%]">fin proyectada</th>
                 <th class="px-3 py-2.5 font-semibold w-[9%]">estatus</th>
-                <th class="px-3 py-2.5 font-semibold w-[5%] text-center">acciones</th>
+                <th class="px-3 py-2.5 font-semibold w-[7%] text-center">acciones</th>
               </tr>
             </thead>
             <tbody id="tableBody" class="divide-y divide-slate-100"></tbody>
@@ -341,6 +342,17 @@
           <!-- Sección 1 — Identificación -->
           <div class="sec bg-white">
             <h3 class="sec-title">1 · Identificación</h3>
+
+            <!-- Fotografía + atribución (obligatoria en las licencias CC BY). -->
+            <div id="fotoBloque" class="hidden mb-4 flex items-start gap-4">
+              <img id="fotoImg" alt="Fotografía de la persona"
+                class="w-28 h-36 object-cover rounded-lg border border-slate-300 bg-slate-100" />
+              <div class="text-xs text-slate-500 leading-relaxed pt-1">
+                <div class="font-medium text-slate-700 mb-0.5">Fotografía</div>
+                <div id="fotoCredito"></div>
+              </div>
+            </div>
+
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label class="lbl" for="f_persona_id">persona_id</label>
@@ -781,6 +793,14 @@
     // OFAC por sí solo puede traer miles de filas, y no queremos que un
     // import masivo infle o ponga en riesgo el archivo de Personas.
     const WORKBOOK_LISTAS_PATH = "/Apps/PEP-Manager/listas_internacionales.xlsx";
+
+    // Carpeta de fotografías en el mismo OneDrive: un <persona_id>.jpg por
+    // persona, más _procedencia_fotos.csv con el origen de cada imagen
+    // (página de Wikipedia, archivo en Commons, autor y licencia). Ese CSV
+    // sirve además de ÍNDICE: si un persona_id no está ahí, no tiene foto y
+    // no vale la pena pedirla a Graph.
+    const FOTOS_PATH = "/Apps/PEP-Manager/fotos";
+    const FOTOS_MANIFIESTO = FOTOS_PATH + "/_procedencia_fotos.csv";
 
     // Columnas que mostraremos (en orden) — se mapean por nombre,
     // así que el orden real de la tabla en Excel no importa.
@@ -1650,6 +1670,140 @@
       return parseInt($("fltSimilitud").value, 10) || 70;
     }
 
+    // =============================================================
+    // FOTOGRAFÍAS
+    // Los archivos viven en OneDrive (no en Excel: son binarios) y se piden
+    // con el token, así que no se pueden poner en <img src> directo: se bajan
+    // como blob y se convierten a object URL. Se cachean por persona_id.
+    // =============================================================
+    let fotosManifiesto = null;   // persona_id -> { autor, licencia, pagina }
+    let fotosPromesa = null;      // dedup de la carga del manifiesto
+    const cacheFotoURL = {};      // persona_id -> object URL (o null si falló)
+
+    // Carga el CSV de procedencia una sola vez. Si no existe, deja el
+    // manifiesto vacío: la app sigue funcionando sin fotos.
+    function asegurarManifiestoFotos() {
+      if (fotosManifiesto) return Promise.resolve(fotosManifiesto);
+      if (fotosPromesa) return fotosPromesa;
+      fotosPromesa = (async () => {
+        const mapa = {};
+        try {
+          const resp = await graphFetch(
+            GRAPH_BASE + "/me/drive/root:" + FOTOS_MANIFIESTO + ":/content", {}
+          );
+          if (resp.ok) {
+            const filas = parseCSV(decodificarBuffer(await resp.arrayBuffer()));
+            if (filas.length > 1) {
+              const col = {};
+              filas[0].forEach((h, i) => { col[normalizarCol(h)] = i; });
+              const dato = (f, n) => (col[n] === undefined ? "" : String(f[col[n]] || "").trim());
+              for (let i = 1; i < filas.length; i++) {
+                const id = dato(filas[i], "persona_id");
+                if (!id) continue;
+                mapa[id] = {
+                  autor: dato(filas[i], "autor"),
+                  licencia: dato(filas[i], "licencia"),
+                  pagina: dato(filas[i], "pagina_commons") || dato(filas[i], "pagina_wikipedia"),
+                };
+              }
+            }
+          }
+        } catch (err) {
+          console.warn("No se pudo leer el manifiesto de fotos:", err);
+        }
+        fotosManifiesto = mapa;
+        return mapa;
+      })();
+      return fotosPromesa;
+    }
+
+    function tieneFoto(personaId) {
+      return !!(fotosManifiesto && fotosManifiesto[String(personaId || "").trim()]);
+    }
+
+    // Descarga la imagen de OneDrive y devuelve un object URL (o null).
+    async function obtenerFotoURL(personaId) {
+      const id = String(personaId || "").trim();
+      if (!id) return null;
+      if (Object.prototype.hasOwnProperty.call(cacheFotoURL, id)) return cacheFotoURL[id];
+      try {
+        const resp = await graphFetch(
+          GRAPH_BASE + "/me/drive/root:" + FOTOS_PATH + "/" + encodeURIComponent(id + ".jpg") + ":/content", {}
+        );
+        if (!resp.ok) { cacheFotoURL[id] = null; return null; }
+        const url = URL.createObjectURL(await resp.blob());
+        cacheFotoURL[id] = url;
+        return url;
+      } catch (err) {
+        console.warn("No se pudo bajar la foto de " + id + ":", err);
+        cacheFotoURL[id] = null;
+        return null;
+      }
+    }
+
+    // Texto de crédito. Las licencias CC BY / CC BY-SA EXIGEN nombrar al
+    // autor; dominio público y CC0 no, pero se cita igual la procedencia.
+    function creditoFoto(info) {
+      if (!info) return "";
+      const partes = [];
+      if (info.autor) partes.push(info.autor);
+      if (info.licencia) partes.push(info.licencia);
+      partes.push("vía Wikimedia Commons");
+      return partes.join(" · ");
+    }
+
+    // Pinta (o esconde) el bloque de foto del formulario de detalle.
+    async function mostrarFotoDetalle(personaId) {
+      const bloque = $("fotoBloque");
+      const img = $("fotoImg");
+      const credito = $("fotoCredito");
+      bloque.classList.add("hidden");
+      img.removeAttribute("src");
+      credito.textContent = "";
+
+      await asegurarManifiestoFotos();
+      const info = fotosManifiesto[String(personaId || "").trim()];
+      if (!info) return; // sin foto: no se muestra el bloque
+
+      const url = await obtenerFotoURL(personaId);
+      if (!url) return;
+
+      img.src = url;
+      credito.textContent = creditoFoto(info);
+      if (info.pagina) {
+        const a = document.createElement("a");
+        a.href = info.pagina;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        a.className = "text-blue-600 hover:underline ml-1";
+        a.textContent = "(ver original)";
+        credito.appendChild(a);
+      }
+      bloque.classList.remove("hidden");
+    }
+
+    // Miniatura para la tabla de resultados. Solo pide la imagen si el
+    // manifiesto dice que existe, para no lanzar 404 por cada fila.
+    function celdaMiniatura(personaId) {
+      const td = document.createElement("td");
+      td.className = "px-2 py-2 align-top text-center";
+      if (!tieneFoto(personaId)) {
+        const ph = document.createElement("div");
+        ph.className = "w-9 h-11 mx-auto rounded border border-slate-200 bg-slate-100";
+        ph.title = "Sin fotografía";
+        td.appendChild(ph);
+        return td;
+      }
+      const img = document.createElement("img");
+      img.className = "w-9 h-11 mx-auto object-cover rounded border border-slate-300 bg-slate-100";
+      img.alt = "Foto";
+      const info = fotosManifiesto[String(personaId).trim()];
+      img.title = creditoFoto(info);
+      obtenerFotoURL(personaId).then((url) => { if (url) img.src = url; });
+      td.appendChild(img);
+      return td;
+    }
+
     // Carga tbl_Personas + catálogos una sola vez y los cachea. Devuelve la
     // MISMA promesa si ya hay una carga en vuelo, para que varias llamadas
     // (foco + submit) no disparen peticiones duplicadas.
@@ -1719,6 +1873,9 @@
       dataError.classList.add("hidden");
 
       await asegurarDatosPersonas();
+      // El manifiesto de fotos hace de índice para las miniaturas, así que
+      // debe estar listo ANTES de dibujar la tabla.
+      await asegurarManifiestoFotos();
       renderResultadosPEP();
 
       if ($("chkInternacionales").checked) {
@@ -1783,6 +1940,10 @@
         const valores = fila.values[0]; // cada fila trae un array dentro de values
         const tr = document.createElement("tr");
         tr.className = "even:bg-slate-50 hover:bg-blue-50/40 transition";
+
+        // Miniatura (primera columna). Va antes que las demás para que el
+        // orden coincida con los encabezados.
+        tr.appendChild(celdaMiniatura(valores[idx["persona_id"]]));
 
         COLS_VISIBLES.forEach((nombreCol) => {
           const td = document.createElement("td");
@@ -2355,6 +2516,8 @@
       mostrarVista("detalle");
       setDirty(false);
       setTimeout(() => $("f_nombre_completo").focus(), 50);
+      // Foto + crédito (asíncrono: no bloquea la apertura del formulario).
+      mostrarFotoDetalle(persona.persona_id);
     }
 
     // =============================================================
@@ -2365,6 +2528,10 @@
       limpiarErrores();
       $("saveError").classList.add("hidden");
       $("origenCargoBanner").classList.add("hidden");
+      // La foto se vuelve a resolver por persona; al abrir el form se oculta.
+      $("fotoBloque").classList.add("hidden");
+      $("fotoImg").removeAttribute("src");
+      $("fotoCredito").textContent = "";
       poblarSelectCargos();
       poblarEntidades();
       $("cargoInfo").classList.add("hidden");
