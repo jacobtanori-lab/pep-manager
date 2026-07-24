@@ -138,22 +138,18 @@
 
       <!-- ===================== VISTA LISTA ===================== -->
       <div id="vistaLista">
-      <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
 
+      <!-- ============ TARJETA 1: BUSCADOR ============ -->
+      <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
         <div class="px-5 py-4 border-b border-slate-200 flex items-center justify-between gap-3 flex-wrap">
           <div>
-            <h2 class="text-lg font-semibold text-slate-900">Personas PEP capturadas</h2>
+            <h2 class="text-lg font-semibold text-slate-900">Buscar personas</h2>
             <p class="text-xs text-slate-500">
-              Tabla <code class="bg-slate-100 px-1 rounded">tbl_Personas</code> · OneDrive
+              PEP nacionales y listas internacionales
               <span id="lastUpdated" class="ml-1 text-slate-400"></span>
             </p>
           </div>
           <div class="flex items-center gap-3 flex-wrap">
-            <!-- Toggle para mostrar/ocultar personas con tipo_pep = Eliminado -->
-            <label class="flex items-center gap-2 text-xs text-slate-600 select-none cursor-pointer">
-              <input id="toggleEliminados" type="checkbox" class="rounded border-slate-300" />
-              Mostrar eliminados
-            </label>
             <button id="btnNueva"
               class="text-sm font-medium px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition shadow-sm">
               + Nueva persona
@@ -165,52 +161,147 @@
           </div>
         </div>
 
-        <!-- Indicador de carga -->
-        <div id="loading" class="hidden p-12 flex flex-col items-center justify-center text-slate-500">
-          <svg class="animate-spin w-8 h-8 text-blue-600 mb-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <form id="formBuscar" class="p-5 space-y-4">
+          <!-- Campo principal: nombre -->
+          <div class="flex gap-2 flex-wrap">
+            <input id="searchInput" type="text" placeholder="Nombre de la persona o entidad…"
+              class="flex-1 min-w-[220px] text-sm px-3 py-2 rounded-lg border border-slate-300
+                     focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
+            <button type="submit" id="btnBuscar"
+              class="text-sm font-medium px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition shadow-sm">
+              Buscar
+            </button>
+            <button type="button" id="btnLimpiar"
+              class="text-sm font-medium px-3 py-2 rounded-lg border border-slate-300 hover:bg-slate-100 transition">
+              Limpiar
+            </button>
+          </div>
+
+          <!-- Filtros adicionales (solo aplican a PEP nacionales) -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div>
+              <label class="lbl" for="fltEstatus">Estatus</label>
+              <select id="fltEstatus" class="inp">
+                <option value="">— Todos —</option>
+                <option value="Activo">Activo</option>
+                <option value="Remanencia">Remanencia</option>
+                <option value="Histórico">Histórico</option>
+                <option value="Por confirmar">Por confirmar</option>
+              </select>
+            </div>
+            <div>
+              <label class="lbl" for="fltTipoPep">Tipo PEP</label>
+              <select id="fltTipoPep" class="inp">
+                <option value="">— Todos —</option>
+                <option value="Principal">Principal</option>
+                <option value="Familiar">Familiar</option>
+                <option value="Asociado">Asociado</option>
+                <option value="Eliminado">Eliminado</option>
+              </select>
+            </div>
+            <div>
+              <label class="lbl" for="fltEntidad">Entidad federativa</label>
+              <select id="fltEntidad" class="inp"><option value="">— Todas —</option></select>
+            </div>
+            <div class="lg:col-span-2">
+              <label class="lbl" for="fltCargo">Cargo</label>
+              <select id="fltCargo" class="inp"><option value="">— Todos —</option></select>
+            </div>
+            <div class="lg:col-span-1">
+              <label class="lbl" for="fltDependencia">Dependencia</label>
+              <select id="fltDependencia" class="inp"><option value="">— Todas —</option></select>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-4 flex-wrap pt-1">
+            <label class="flex items-center gap-2 text-sm text-slate-700 select-none cursor-pointer">
+              <input id="chkInternacionales" type="checkbox" class="rounded border-slate-300" checked />
+              Buscar también en listas internacionales
+            </label>
+            <label class="flex items-center gap-2 text-xs text-slate-600 select-none cursor-pointer">
+              <input id="toggleEliminados" type="checkbox" class="rounded border-slate-300" />
+              Incluir eliminados (PEP)
+            </label>
+          </div>
+        </form>
+
+        <!-- Indicador de carga (datos de PEP + catálogos, bajo demanda) -->
+        <div id="loading" class="hidden px-5 pb-5 flex items-center gap-3 text-slate-500">
+          <svg class="animate-spin w-5 h-5 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
           </svg>
-          <span class="text-sm">Cargando personas desde OneDrive…</span>
+          <span class="text-sm">Cargando datos…</span>
         </div>
 
         <!-- Mensaje de error (Graph) -->
-        <div id="dataError" class="hidden p-6 m-5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm"></div>
+        <div id="dataError" class="hidden p-4 m-5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm"></div>
+      </div>
 
-        <!-- Estado vacío -->
-        <div id="emptyState" class="hidden p-12 text-center text-slate-500 text-sm">
-          No hay personas capturadas aún
+      <!-- Pista inicial, antes de la primera búsqueda -->
+      <div id="hintBuscar" class="mt-5 p-10 text-center text-slate-500 text-sm bg-white rounded-xl border border-slate-200 shadow-sm">
+        Escribe un nombre y pulsa <strong>Buscar</strong> para consultar tus PEP nacionales y las listas internacionales.
+      </div>
+
+      <!-- ============ TARJETA 2: RESULTADOS EN PEP NACIONALES ============ -->
+      <div id="resPepCard" class="hidden mt-5 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="px-5 py-3 border-b border-slate-200 flex items-center justify-between gap-2 flex-wrap">
+          <h3 class="font-semibold text-slate-900">PEP nacionales</h3>
+          <span id="rowCount" class="text-xs text-slate-500"></span>
         </div>
 
-        <!-- Tabla responsiva -->
-        <div id="tableWrap" class="hidden">
-          <!-- Buscador en vivo (filtra el array ya cargado, sin llamar a Graph) -->
-          <div class="px-5 py-3 border-b border-slate-100">
-            <input id="searchInput" type="text" placeholder="Buscar por nombre o ID…"
-              class="w-full sm:w-80 text-sm px-3 py-2 rounded-lg border border-slate-300
-                     focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
-          </div>
-
-          <div class="overflow-auto max-h-[60vh]">
-            <table id="tablaPersonas" class="w-full text-sm">
-              <thead>
-                <tr class="sticky top-0 z-10 bg-slate-100 text-left text-slate-700">
-                  <th class="px-4 py-3 font-semibold whitespace-nowrap">persona_id</th>
-                  <th class="px-4 py-3 font-semibold whitespace-nowrap">nombre_completo</th>
-                  <th class="px-4 py-3 font-semibold whitespace-nowrap">cargo_id</th>
-                  <th class="px-4 py-3 font-semibold whitespace-nowrap">dependencia_efectiva_id</th>
-                  <th class="px-4 py-3 font-semibold whitespace-nowrap">fecha_inicio_cargo</th>
-                  <th class="px-4 py-3 font-semibold whitespace-nowrap">fecha_fin_proyectada</th>
-                  <th class="px-4 py-3 font-semibold whitespace-nowrap">estatus</th>
-                  <th class="px-4 py-3 font-semibold whitespace-nowrap text-center">acciones</th>
-                </tr>
-              </thead>
-              <tbody id="tableBody" class="divide-y divide-slate-100"></tbody>
-            </table>
-          </div>
+        <div id="emptyState" class="hidden p-8 text-center text-slate-500 text-sm">
+          Sin coincidencias en tus PEP nacionales.
         </div>
 
-        <div id="rowCount" class="hidden px-5 py-3 text-xs text-slate-400 border-t border-slate-100"></div>
+        <div id="tableWrap" class="hidden overflow-auto max-h-[55vh]">
+          <table id="tablaPersonas" class="w-full text-sm table-fixed">
+            <thead>
+              <tr class="sticky top-0 z-10 bg-slate-100 text-left text-slate-700">
+                <th class="px-3 py-2.5 font-semibold w-[10%]">persona_id</th>
+                <th class="px-3 py-2.5 font-semibold w-[26%]">nombre_completo</th>
+                <th class="px-3 py-2.5 font-semibold w-[12%]">cargo</th>
+                <th class="px-3 py-2.5 font-semibold w-[18%]">dependencia</th>
+                <th class="px-3 py-2.5 font-semibold w-[10%]">inicio</th>
+                <th class="px-3 py-2.5 font-semibold w-[10%]">fin proyectada</th>
+                <th class="px-3 py-2.5 font-semibold w-[9%]">estatus</th>
+                <th class="px-3 py-2.5 font-semibold w-[5%] text-center">acciones</th>
+              </tr>
+            </thead>
+            <tbody id="tableBody" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ============ TARJETA 3: RESULTADOS EN LISTAS INTERNACIONALES ============ -->
+      <div id="resIntCard" class="hidden mt-5 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="px-5 py-3 border-b border-slate-200 flex items-center justify-between gap-2 flex-wrap">
+          <div>
+            <h3 class="font-semibold text-slate-900">Listas internacionales</h3>
+            <p class="text-xs text-slate-500">Solo lectura · se leen de los archivos fuente</p>
+          </div>
+          <span id="intProgreso" class="text-xs text-slate-500"></span>
+        </div>
+
+        <div id="intVacio" class="hidden p-8 text-center text-slate-500 text-sm">
+          Sin coincidencias en las listas internacionales consultadas.
+        </div>
+
+        <div id="intTableWrap" class="hidden overflow-auto max-h-[55vh]">
+          <table class="w-full text-sm table-fixed">
+            <thead>
+              <tr class="sticky top-0 z-10 bg-slate-100 text-left text-slate-700">
+                <th class="px-3 py-2.5 font-semibold w-[14%]">lista</th>
+                <th class="px-3 py-2.5 font-semibold w-[24%]">nombre</th>
+                <th class="px-3 py-2.5 font-semibold w-[22%]">alias</th>
+                <th class="px-3 py-2.5 font-semibold w-[10%]">tipo</th>
+                <th class="px-3 py-2.5 font-semibold w-[10%]">nacionalidad</th>
+                <th class="px-3 py-2.5 font-semibold w-[20%]">motivo / programa</th>
+              </tr>
+            </thead>
+            <tbody id="intTableBody" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
       </div>
       </div><!-- /vistaLista -->
 
@@ -842,6 +933,12 @@
     let datosCargados = { idx: {}, filas: [] };
     let ultimaCarga = null; // timestamp (ms) de la última carga exitosa
 
+    // Estado del buscador. La app ya NO carga datos al abrir: se traen bajo
+    // demanda y se cachean aquí.
+    let busquedaHecha = false;         // ¿ya se pulsó Buscar al menos una vez?
+    let cargaPersonasPromesa = null;   // dedup de cargas simultáneas
+    let cacheRegistrosFuente = {};     // lista_id -> registros ya parseados
+
     // Estado global de navegación (sin router; mostramos/ocultamos divs).
     let estadoApp = {
       seccionActual: "personas",   // "personas" | "catalogos" | "listas"
@@ -875,7 +972,10 @@
       const cuenta = getCuentaActiva();
       if (cuenta) {
         mostrarApp(cuenta);
-        cargarPersonas();
+        // NO se cargan datos aquí a propósito: la carga de tbl_Personas +
+        // catálogos son 6 llamadas a Graph y hacían lenta la entrada. Ahora
+        // se cargan bajo demanda (al enfocar el buscador o al buscar) y se
+        // cachean, así la app abre instantánea.
       } else {
         mostrarLogin();
       }
@@ -902,7 +1002,7 @@
         const resultado = await msalInstance.loginPopup({ scopes: SCOPES });
         msalInstance.setActiveAccount(resultado.account);
         mostrarApp(resultado.account);
-        cargarPersonas();
+        // Sin carga automática: los datos se traen al buscar (ver init).
       } catch (err) {
         console.error("Error de login:", err);
         loginError.textContent = "No se pudo iniciar sesión: " + (err.message || err);
@@ -919,13 +1019,26 @@
       mostrarLogin();
     });
 
-    $("btnReload").addEventListener("click", cargarPersonas);
+    // "Recargar": tira la caché en memoria y vuelve a traer todo de Graph.
+    $("btnReload").addEventListener("click", async () => {
+      datosCargados = { idx: {}, filas: [] };
+      catCargos = []; catDeps = [];
+      cacheRegistrosFuente = {};
+      await asegurarDatosPersonas(true);
+      if (busquedaHecha) buscar();
+    });
 
-    // Filtrado en vivo: re-renderiza la tabla con el texto del buscador.
-    searchInput.addEventListener("input", () => renderTabla(searchInput.value));
+    // Buscar (submit del formulario o Enter en el campo de nombre).
+    $("formBuscar").addEventListener("submit", (e) => { e.preventDefault(); buscar(); });
+    $("btnLimpiar").addEventListener("click", limpiarBusqueda);
 
-    // Toggle "Mostrar eliminados": re-renderiza la lista.
-    $("toggleEliminados").addEventListener("change", () => renderTabla(searchInput.value));
+    // Precarga al enfocar el buscador: cuando el usuario termine de teclear
+    // los datos ya suelen estar listos, sin bloquear la apertura de la app.
+    searchInput.addEventListener("focus", () => { asegurarDatosPersonas(); }, { once: true });
+
+    // Los filtros re-ejecutan la búsqueda solo si ya se buscó una vez.
+    ["fltEstatus", "fltTipoPep", "fltEntidad", "fltCargo", "fltDependencia", "toggleEliminados"]
+      .forEach((id) => $(id).addEventListener("change", () => { if (busquedaHecha) buscar(); }));
 
     // Abrir formulario en modo "nueva persona".
     $("btnNueva").addEventListener("click", abrirNueva);
@@ -1305,15 +1418,11 @@
           await cargarCatalogos(headers);
         }
 
-        if (filas.length === 0) {
-          emptyState.classList.remove("hidden");
-          return;
-        }
+        // Ya con los catálogos en memoria, poblamos los selects de filtros.
+        poblarFiltros();
 
-        // Renderizamos respetando el filtro actual del buscador.
-        renderTabla(searchInput.value);
-        tableWrap.classList.remove("hidden");
-        rowCount.classList.remove("hidden");
+        // OJO: ya no se renderiza nada aquí. La tabla la dibuja buscar():
+        // esta función solo trae y cachea los datos.
 
       } catch (err) {
         console.error("Error al cargar personas:", err);
@@ -1323,25 +1432,127 @@
       }
     }
 
-    // -------------------------------------------------------------
-    // Render de la tabla aplicando el filtro de búsqueda (en memoria)
-    // -------------------------------------------------------------
-    function renderTabla(filtro) {
+    // =============================================================
+    // BÚSQUEDA (reemplaza la carga automática del listado completo)
+    // =============================================================
+
+    // Normaliza texto para comparar sin acentos ni mayúsculas: los nombres
+    // de estas listas vienen transliterados y con acentos inconsistentes.
+    function normTexto(s) {
+      const marks = new RegExp("[\\u0300-\\u036f]", "g");
+      return String(s || "").normalize("NFD").replace(marks, "").toLowerCase().trim();
+    }
+
+    // Carga tbl_Personas + catálogos una sola vez y los cachea. Devuelve la
+    // MISMA promesa si ya hay una carga en vuelo, para que varias llamadas
+    // (foco + submit) no disparen peticiones duplicadas.
+    function asegurarDatosPersonas(forzar) {
+      if (forzar) cargaPersonasPromesa = null;
+      if (!cargaPersonasPromesa) {
+        // idx con columnas = la lectura funcionó (una tabla vacía es válida:
+        // trae columnas aunque no traiga filas).
+        const yaEstan = Object.keys(datosCargados.idx).length > 0 && catCargos.length > 0;
+        cargaPersonasPromesa = yaEstan
+          ? Promise.resolve()
+          : cargarPersonas().then(() => {
+              // Si falló (ni siquiera llegaron las columnas), soltamos la
+              // promesa para que el próximo intento vuelva a probar en vez
+              // de quedarse cacheado en el error.
+              if (Object.keys(datosCargados.idx).length === 0) cargaPersonasPromesa = null;
+            });
+      }
+      return cargaPersonasPromesa;
+    }
+
+    // Llena los selects de cargo/dependencia/entidad con los catálogos.
+    function poblarFiltros() {
+      const selCargo = $("fltCargo");
+      if (selCargo.options.length <= 1 && catCargos.length) {
+        catCargos.forEach((c) => {
+          const o = document.createElement("option");
+          o.value = c.cargo_id;
+          o.textContent = c.cargo_id + " — " + (c.cargo || "");
+          selCargo.appendChild(o);
+        });
+      }
+      const selDep = $("fltDependencia");
+      if (selDep.options.length <= 1 && catDeps.length) {
+        catDeps.forEach((d) => {
+          const o = document.createElement("option");
+          o.value = d.dependencia_id;
+          o.textContent = d.dependencia_id + " — " + (d.nombre || "");
+          selDep.appendChild(o);
+        });
+      }
+      const selEnt = $("fltEntidad");
+      if (selEnt.options.length <= 1) {
+        ESTADOS_MX.forEach((e) => {
+          const o = document.createElement("option");
+          o.value = e; o.textContent = e;
+          selEnt.appendChild(o);
+        });
+      }
+    }
+
+    function limpiarBusqueda() {
+      searchInput.value = "";
+      ["fltEstatus", "fltTipoPep", "fltEntidad", "fltCargo", "fltDependencia"].forEach((id) => { $(id).value = ""; });
+      $("toggleEliminados").checked = false;
+      busquedaHecha = false;
+      $("resPepCard").classList.add("hidden");
+      $("resIntCard").classList.add("hidden");
+      $("hintBuscar").classList.remove("hidden");
+    }
+
+    // Orquesta la búsqueda: PEP primero (rápido, ya en memoria) y luego las
+    // listas internacionales (que se leen de los archivos fuente).
+    async function buscar() {
+      busquedaHecha = true;
+      $("hintBuscar").classList.add("hidden");
+      dataError.classList.add("hidden");
+
+      await asegurarDatosPersonas();
+      renderResultadosPEP();
+
+      if ($("chkInternacionales").checked) {
+        await buscarInternacionales();
+      } else {
+        $("resIntCard").classList.add("hidden");
+      }
+    }
+
+    // ---- Resultados en PEP nacionales (con acciones) ----
+    function renderResultadosPEP() {
       const idx = datosCargados.idx;
-      const q = (filtro || "").trim().toLowerCase();
+      const q = normTexto(searchInput.value);
+      const fEstatus = $("fltEstatus").value;
+      const fTipo = $("fltTipoPep").value;
+      const fEntidad = $("fltEntidad").value;
+      const fCargo = $("fltCargo").value;
+      const fDep = $("fltDependencia").value;
+      const incluirEliminados = $("toggleEliminados").checked;
 
-      const mostrarEliminados = $("toggleEliminados").checked;
+      const val = (v, col) => String(v[idx[col]] ?? "");
 
-      // Filtro: oculta eliminados (salvo toggle) y aplica búsqueda.
       const filas = datosCargados.filas.filter((fila) => {
         const v = fila.values[0];
-        const tipo = String(v[idx["tipo_pep"]] ?? "");
-        if (!mostrarEliminados && tipo === "Eliminado") return false;
+        if (!incluirEliminados && val(v, "tipo_pep") === "Eliminado") return false;
+        if (fEstatus && val(v, "estatus") !== fEstatus) return false;
+        if (fTipo && val(v, "tipo_pep") !== fTipo) return false;
+        if (fEntidad && val(v, "entidad_federativa") !== fEntidad) return false;
+        if (fCargo && val(v, "cargo_id") !== fCargo) return false;
+        if (fDep && val(v, "dependencia_efectiva_id") !== fDep) return false;
         if (!q) return true;
-        const id = String(v[idx["persona_id"]] ?? "").toLowerCase();
-        const nombre = String(v[idx["nombre_completo"]] ?? "").toLowerCase();
-        return id.includes(q) || nombre.includes(q);
+        // Busca en nombre, nombre_normalizado y el propio id.
+        return normTexto(val(v, "nombre_completo")).includes(q) ||
+          normTexto(val(v, "nombre_normalizado")).includes(q) ||
+          normTexto(val(v, "persona_id")).includes(q);
       });
+
+      $("resPepCard").classList.remove("hidden");
+      $("emptyState").classList.toggle("hidden", filas.length > 0);
+      tableWrap.classList.toggle("hidden", filas.length === 0);
+      rowCount.textContent = filas.length + " de " + datosCargados.filas.length + " persona(s)";
 
       tableBody.innerHTML = "";
       filas.forEach((fila) => {
@@ -1355,19 +1566,30 @@
           let valor = (i !== undefined && valores[i] !== null && valores[i] !== "")
             ? valores[i] : null;
 
-          // Columnas de fecha: convertir serial de Excel a dd/mm/aaaa.
+          // Celdas sin nowrap: las columnas se auto-ajustan al ancho de la
+          // pantalla (table-fixed + %) y el texto largo hace wrap.
+          const claseCelda = "px-3 py-2 align-top text-slate-700 break-words";
+
           if (COLS_FECHA.includes(nombreCol)) {
-            td.className = "px-4 py-2.5 whitespace-nowrap text-slate-700";
+            td.className = claseCelda;
             td.textContent = formatExcelDate(valor);
           } else if (nombreCol === "estatus") {
             // Estatus como badge de color según valor.
-            td.className = "px-4 py-2.5 whitespace-nowrap";
+            td.className = "px-3 py-2 align-top";
             const span = document.createElement("span");
             span.className = "inline-block px-2 py-0.5 rounded-full text-xs font-medium " + claseEstatus(valor);
             span.textContent = valor != null ? valor : "—";
             td.appendChild(span);
+          } else if (nombreCol === "cargo_id" || nombreCol === "dependencia_efectiva_id") {
+            // Mostramos el nombre legible del catálogo (con el id en tooltip),
+            // que es lo útil al leer resultados.
+            td.className = claseCelda;
+            const cat = (nombreCol === "cargo_id") ? mapCargo[valor] : mapDep[valor];
+            const legible = cat ? (cat.cargo || cat.nombre) : null;
+            td.textContent = legible || (valor != null ? valor : "—");
+            if (valor != null) td.title = String(valor);
           } else {
-            td.className = "px-4 py-2.5 whitespace-nowrap text-slate-700";
+            td.className = claseCelda;
             td.textContent = valor != null ? valor : "—";
           }
           tr.appendChild(td);
@@ -1375,7 +1597,7 @@
 
         // Columna de acciones: ver, editar, eliminar.
         const tdAcc = document.createElement("td");
-        tdAcc.className = "px-4 py-2.5 whitespace-nowrap text-center";
+        tdAcc.className = "px-3 py-2 align-top text-center";
         const cont = document.createElement("div");
         cont.className = "flex items-center justify-center gap-2";
 
@@ -1412,12 +1634,158 @@
         tableBody.appendChild(tr);
       });
 
-      rowCount.textContent = filas.length + " persona(s)" +
-        (q ? " (filtradas de " + datosCargados.filas.length + ")" : "");
-
       // Habilita el redimensionado manual de columnas una vez que la tabla
       // ya está en pantalla (requiere offsetWidth > 0). Solo se instala una vez.
       habilitarResizeColumnas($("tablaPersonas"));
+    }
+
+    // =============================================================
+    // BÚSQUEDA EN LISTAS INTERNACIONALES
+    // Se leen de los ARCHIVOS FUENTE (espejo .gz del repo + los CSV de
+    // OpenSanctions, que permiten CORS), no de Excel: leer ~60 mil filas por
+    // Graph tardaría minutos, mientras que los archivos comprimidos se bajan
+    // y parsean en segundos con los adaptadores que ya existen. Cada lista se
+    // cachea en memoria tras la primera consulta.
+    // =============================================================
+
+    // Carga CAT_Listas (solo los datos, sin tocar la UI de la pestaña Listas).
+    async function asegurarConfigListas() {
+      if (catListas.length > 0) return;
+      const token = await obtenerToken();
+      const headers = { Authorization: "Bearer " + token };
+      const [colsResp, rowsResp] = await Promise.all([
+        fetch(wbListas() + "/columns", { headers }),
+        fetch(wbListas() + "/rows", { headers }),
+      ]);
+      if (!colsResp.ok || !rowsResp.ok) throw new Error("No se pudo leer la configuración de listas (CAT_Listas).");
+      const colsData = await colsResp.json();
+      const rowsData = await rowsResp.json();
+      const idx = {};
+      (colsData.value || []).forEach((c) => { idx[normalizarCol(c.name)] = c.index; });
+      catListas = (rowsData.value || []).map((fila) => {
+        const v = fila.values[0];
+        const o = { _index: fila.index };
+        Object.keys(idx).forEach((name) => { o[name] = v[idx[name]]; });
+        return o;
+      });
+    }
+
+    // Devuelve los registros normalizados de una lista, desde su archivo
+    // fuente. Cachea por lista_id. null si no se pudo obtener.
+    async function obtenerRegistrosDeFuente(lista) {
+      const clave = String(lista.lista_id || "").trim();
+      if (cacheRegistrosFuente[clave]) return cacheRegistrosFuente[clave];
+
+      const adaptador = obtenerAdaptador(lista);
+      if (!adaptador) return null;
+
+      // Mismo orden que "Actualizar ahora": espejo comprimido, espejo plano,
+      // y por último la fuente original (que suele bloquear por CORS).
+      const candidatos = mirrorUrlsDe(lista).concat(lista.url_fuente ? [lista.url_fuente] : []);
+      for (const url of candidatos) {
+        try {
+          const resp = await fetch(url);
+          if (!resp.ok) continue;
+          const buf = await talvezGunzip(await resp.arrayBuffer());
+          const registros = adaptador(decodificarBuffer(buf));
+          cacheRegistrosFuente[clave] = registros;
+          return registros;
+        } catch (err) {
+          console.warn("No se pudo leer " + clave + " desde " + url + ":", err);
+        }
+      }
+      return null;
+    }
+
+    async function buscarInternacionales() {
+      const q = normTexto(searchInput.value);
+      const card = $("resIntCard");
+      const tbody = $("intTableBody");
+      const progreso = $("intProgreso");
+
+      card.classList.remove("hidden");
+      tbody.innerHTML = "";
+      $("intVacio").classList.add("hidden");
+      $("intTableWrap").classList.add("hidden");
+
+      // Sin texto no tiene sentido: devolvería las ~60 mil filas completas.
+      if (!q) {
+        progreso.textContent = "";
+        $("intVacio").textContent = "Escribe un nombre para buscar en las listas internacionales.";
+        $("intVacio").classList.remove("hidden");
+        return;
+      }
+
+      try {
+        await asegurarConfigListas();
+      } catch (err) {
+        progreso.textContent = "";
+        $("intVacio").textContent = "No se pudo leer CAT_Listas: " + (err.message || err);
+        $("intVacio").classList.remove("hidden");
+        return;
+      }
+
+      const activas = catListas.filter((l) => {
+        const act = l.activa === true ||
+          ["true", "verdadero", "sí", "si", "1", "x"].includes(String(l.activa).trim().toLowerCase());
+        return act && obtenerAdaptador(l);
+      });
+
+      let total = 0, fallidas = 0;
+      for (let i = 0; i < activas.length; i++) {
+        const lista = activas[i];
+        const etiqueta = lista.nombre || lista.lista_id;
+        progreso.textContent = "Buscando… " + (i + 1) + " de " + activas.length + " (" + etiqueta + ")";
+
+        let registros = null;
+        try {
+          registros = await obtenerRegistrosDeFuente(lista);
+        } catch (err) {
+          console.warn("Error al leer " + lista.lista_id + ":", err);
+        }
+        if (!registros) { fallidas++; continue; }
+
+        // Coincidencia por nombre principal o por cualquiera de los alias.
+        const hits = registros.filter((r) =>
+          normTexto(r.nombre_principal).includes(q) || normTexto(r.alias).includes(q));
+
+        // Se pintan los resultados de cada lista en cuanto están listos,
+        // en vez de esperar a que terminen las 13.
+        hits.forEach((r) => tbody.appendChild(filaInternacional(etiqueta, r)));
+        total += hits.length;
+        if (total > 0) $("intTableWrap").classList.remove("hidden");
+      }
+
+      progreso.textContent = total + " coincidencia(s) en " + activas.length + " lista(s)" +
+        (fallidas ? " · " + fallidas + " no se pudo(ieron) leer" : "");
+      if (total === 0) {
+        $("intVacio").textContent = "Sin coincidencias en las listas internacionales consultadas.";
+        $("intVacio").classList.remove("hidden");
+      }
+    }
+
+    // Construye una fila de la tabla de resultados internacionales.
+    function filaInternacional(etiquetaLista, r) {
+      const tr = document.createElement("tr");
+      tr.className = "even:bg-slate-50 hover:bg-blue-50/40 transition";
+      const celdas = [
+        etiquetaLista,
+        r.nombre_principal,
+        r.alias,
+        r.tipo_sujeto,
+        r.nacionalidad,
+        r.programa_motivo,
+      ];
+      celdas.forEach((val, i) => {
+        const td = document.createElement("td");
+        td.className = "px-3 py-2 align-top text-slate-700 break-words" +
+          (i === 0 ? " font-medium text-slate-900" : "");
+        const texto = (val === undefined || val === null || val === "") ? "—" : String(val);
+        td.textContent = texto;
+        if (texto !== "—") td.title = texto;
+        tr.appendChild(td);
+      });
+      return tr;
     }
 
     // Convierte un número serial de Excel a string dd/mm/aaaa.
@@ -2320,12 +2688,12 @@
     }
 
     // Oculta todos los estados de la sección de datos.
+    // Limpia los estados de carga/error del buscador. Ya NO oculta la tabla
+    // ni el contador: la visibilidad de los resultados la maneja
+    // renderResultadosPEP() según lo que encuentre.
     function ocultarTodo() {
       loading.classList.add("hidden");
       dataError.classList.add("hidden");
-      emptyState.classList.add("hidden");
-      tableWrap.classList.add("hidden");
-      rowCount.classList.add("hidden");
     }
 
     // =============================================================
