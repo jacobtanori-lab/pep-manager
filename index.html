@@ -213,6 +213,19 @@
             </div>
           </div>
 
+          <!-- Umbral de similitud: por debajo de este % no se muestra. -->
+          <div class="flex items-center gap-3 flex-wrap pt-1 border-t border-slate-100 mt-1">
+            <label class="text-sm font-medium text-slate-700 pt-3" for="fltSimilitud">
+              Similitud mínima
+            </label>
+            <input id="fltSimilitud" type="range" min="30" max="100" step="5" value="70"
+              class="w-48 mt-3 accent-blue-600" />
+            <span id="lblSimilitud" class="text-sm font-bold text-blue-700 mt-3 w-12">70%</span>
+            <span class="text-xs text-slate-500 mt-3">
+              Menor % = más resultados (y más falsos positivos)
+            </span>
+          </div>
+
           <div class="flex items-center gap-4 flex-wrap pt-1">
             <label class="flex items-center gap-2 text-sm text-slate-700 select-none cursor-pointer">
               <input id="chkInternacionales" type="checkbox" class="rounded border-slate-300" checked />
@@ -1024,6 +1037,8 @@
       datosCargados = { idx: {}, filas: [] };
       catCargos = []; catDeps = [];
       cacheRegistrosFuente = {};
+      // También el corpus IDF: si no, al reindexar se contarían doble.
+      dfTokens = {}; totalDocsIDF = 0;
       await asegurarDatosPersonas(true);
       if (busquedaHecha) buscar();
     });
@@ -1039,6 +1054,13 @@
     // Los filtros re-ejecutan la búsqueda solo si ya se buscó una vez.
     ["fltEstatus", "fltTipoPep", "fltEntidad", "fltCargo", "fltDependencia", "toggleEliminados"]
       .forEach((id) => $(id).addEventListener("change", () => { if (busquedaHecha) buscar(); }));
+
+    // Slider de similitud: la etiqueta sigue al vuelo, pero re-filtrar solo
+    // al soltar (evita recalcular miles de puntajes en cada pixel).
+    $("fltSimilitud").addEventListener("input", () => {
+      $("lblSimilitud").textContent = $("fltSimilitud").value + "%";
+    });
+    $("fltSimilitud").addEventListener("change", () => { if (busquedaHecha) buscar(); });
 
     // Abrir formulario en modo "nueva persona".
     $("btnNueva").addEventListener("click", abrirNueva);
@@ -1421,6 +1443,11 @@
         // Ya con los catálogos en memoria, poblamos los selects de filtros.
         poblarFiltros();
 
+        // Los nombres de PEP también alimentan el corpus IDF de similitud.
+        if (idx["nombre_completo"] !== undefined) {
+          indexarIDF(filas.map((f) => simNorm(f.values[0][idx["nombre_completo"]])));
+        }
+
         // OJO: ya no se renderiza nada aquí. La tabla la dibuja buscar():
         // esta función solo trae y cachea los datos.
 
@@ -1441,6 +1468,186 @@
     function normTexto(s) {
       const marks = new RegExp("[\\u0300-\\u036f]", "g");
       return String(s || "").normalize("NFD").replace(marks, "").toLowerCase().trim();
+    }
+
+    // =============================================================
+    // SIMILITUD DE NOMBRES (fuzzy matching)
+    // Portado tal cual del motor de screening de PLD Corporativo SMS
+    // (allá se llaman scrNorm/scrDice/scrJaroWinkler/scrFon/scrIDF/
+    // scrSubset/scrSimilCore). Combina cuatro señales:
+    //   35% tokens comunes ponderados por IDF   25% Dice sobre bigramas
+    //   25% Jaro-Winkler                        15% coincidencia fonética
+    // Si un nombre es subconjunto del otro, el puntaje sube a 90 como mínimo.
+    // =============================================================
+
+    // Quita terminaciones de tipo societario (S.A. de C.V., SAS, S. de R.L.…)
+    // para que no inflen la similitud entre personas morales.
+    function simStripLegal(s) {
+      if (!s) return s;
+      const tail = "(?:\\s+de\\s+c\\s*v)?";
+      const bases = [
+        "s\\s*a\\s*p\\s*i", "s\\s*a\\s*s", "s\\s*de\\s*r\\s*l", "s\\s*en\\s*c",
+        "s\\s*r\\s*l", "s\\s*a", "s\\s*c", "a\\s*c",
+      ];
+      const re = new RegExp("\\s+(?:" + bases.join("|") + ")" + tail + "$");
+      let prev;
+      do { prev = s; s = s.replace(re, "").trim(); } while (s !== prev && s);
+      return s;
+    }
+
+    function simNorm(s) {
+      if (!s) return "";
+      const marks = new RegExp("[\\u0300-\\u036f]", "g");
+      const n = String(s)
+        .normalize("NFD").replace(marks, "")
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      return simStripLegal(n);
+    }
+
+    // Coeficiente de Dice (0-100) sobre bigramas.
+    function simDice(sa, sb) {
+      if (!sa || !sb) return 0;
+      const bg = (s) => { const a = []; for (let i = 0; i < s.length - 1; i++) a.push(s.substr(i, 2)); return a; };
+      const ba = bg(sa), bb = bg(sb);
+      if (!ba.length || !bb.length) return 0;
+      const inter = ba.filter((g) => bb.indexOf(g) >= 0).length;
+      return Math.round(2 * inter / (ba.length + bb.length) * 100);
+    }
+
+    // Jaro-Winkler (0-100): premia coincidencias al inicio, útil en nombres.
+    function simJaroWinkler(s1, s2) {
+      if (s1 === s2) return 100;
+      if (!s1.length || !s2.length) return 0;
+      const md = Math.max(0, Math.floor(Math.max(s1.length, s2.length) / 2) - 1);
+      const m1 = new Array(s1.length), m2 = new Array(s2.length);
+      let m = 0;
+      for (let i = 0; i < s1.length; i++) {
+        const lo = Math.max(0, i - md), hi = Math.min(i + md + 1, s2.length);
+        for (let j = lo; j < hi; j++) if (!m2[j] && s1[i] === s2[j]) { m1[i] = m2[j] = true; m++; break; }
+      }
+      if (!m) return 0;
+      let t = 0, k = 0;
+      for (let x = 0; x < s1.length; x++) if (m1[x]) { while (!m2[k]) k++; if (s1[x] !== s2[k]) t++; k++; }
+      t = t / 2;
+      const jaro = (m / s1.length + m / s2.length + (m - t) / m) / 3;
+      let p = 0;
+      for (let l = 0; l < Math.min(4, s1.length, s2.length); l++) { if (s1[l] === s2[l]) p++; else break; }
+      return Math.round((jaro + p * 0.1 * (1 - jaro)) * 100);
+    }
+
+    // Código fonético simplificado (español y transliteraciones).
+    function simFon(t) {
+      t = String(t).replace(/[^a-zñ]/g, "");
+      if (!t) return "";
+      return t
+        .replace(/h/g, "")
+        .replace(/qu/g, "k").replace(/q/g, "k")
+        .replace(/gu([ei])/g, "g$1").replace(/g([ei])/g, "j$1")
+        .replace(/c([ei])/g, "s$1").replace(/c/g, "k").replace(/z/g, "s")
+        .replace(/ll/g, "y").replace(/v/g, "b").replace(/w/g, "b")
+        .replace(/x/g, "ks").replace(/ñ/g, "ni")
+        .replace(/(.)\1+/g, "$1");
+    }
+
+    // Peso IDF: un token raro ("Guzmán") pesa más que uno común ("de", "López").
+    // El corpus se va construyendo conforme se cargan PEP y listas.
+    let dfTokens = {};
+    let totalDocsIDF = 0;
+    function simIDF(t) {
+      if (!totalDocsIDF) return 1;
+      return Math.log((totalDocsIDF + 1) / ((dfTokens[t] || 0) + 1)) + 0.5;
+    }
+
+    // Suma nombres ya normalizados al corpus IDF (una vez por lista/carga).
+    function indexarIDF(nombresNorm) {
+      nombresNorm.forEach((nn) => {
+        if (!nn) return;
+        totalDocsIDF++;
+        const vistos = {};
+        nn.split(" ").forEach((t) => {
+          if (t.length > 2 && !vistos[t]) { vistos[t] = 1; dfTokens[t] = (dfTokens[t] || 0) + 1; }
+        });
+      });
+    }
+
+    // ¿Todos los tokens significativos distintos de 'chico' están en 'grande'?
+    function simSubset(chico, grande) {
+      const sig = chico.filter((t) => t.length > 2);
+      const distintos = sig.filter((t, i) => sig.indexOf(t) === i);
+      if (distintos.length < 2) return false;
+      return distintos.every((t) => grande.indexOf(t) >= 0);
+    }
+
+    // Núcleo: recibe el nombre buscado ya normalizado + sus tokens, y el
+    // nombre candidato ya normalizado. Devuelve 0-100.
+    function simCore(qNorm, qTokens, eNorm) {
+      if (!qNorm || !eNorm) return 0;
+      if (qNorm === eNorm) return 100;
+      const eTokens = eNorm.split(" ");
+
+      // 1) Tokens comunes ponderados por IDF
+      const union = {};
+      qTokens.concat(eTokens).forEach((t) => { if (t.length > 2) union[t] = 1; });
+      let num = 0, den = 0;
+      Object.keys(union).forEach((t) => {
+        const w = simIDF(t); den += w;
+        if (qTokens.indexOf(t) >= 0 && eTokens.indexOf(t) >= 0) num += w;
+      });
+      const tokenScore = den > 0 ? Math.round(num / den * 100) : 0;
+
+      // 2) Dice sobre bigramas
+      const dice = simDice(qNorm.replace(/\s/g, ""), eNorm.replace(/\s/g, ""));
+
+      const sub = simSubset(qTokens, eTokens) || simSubset(eTokens, qTokens);
+
+      // Corte barato: si claramente no se parecen, evitamos JW y fonético
+      // (esto es lo que hace viable comparar contra decenas de miles).
+      if (!sub && tokenScore < 20 && dice < 40) return Math.round(tokenScore * 0.5 + dice * 0.5);
+
+      const jw = simJaroWinkler(qNorm.replace(/\s/g, ""), eNorm.replace(/\s/g, ""));
+
+      const qf = qTokens.filter((t) => t.length > 2).map(simFon);
+      const ef = eTokens.filter((t) => t.length > 2).map(simFon);
+      let phon = 0;
+      if (qf.length && ef.length) {
+        const pm = qf.filter((f) => f && ef.indexOf(f) >= 0).length;
+        phon = Math.round(pm / Math.max(qf.length, ef.length) * 100);
+      }
+
+      let base = tokenScore * 0.35 + dice * 0.25 + jw * 0.25 + phon * 0.15;
+      if (sub) base = Math.max(base, 90);
+      return Math.max(0, Math.min(100, Math.round(base)));
+    }
+
+    // Mejor puntaje del nombre buscado contra varios candidatos ya
+    // normalizados (nombre principal + cada alias por separado: compararlo
+    // contra la cadena completa de alias diluiría el puntaje).
+    function mejorSimilitud(qNorm, qTokens, normsCandidatos) {
+      let mejor = 0;
+      for (let i = 0; i < normsCandidatos.length; i++) {
+        const s = simCore(qNorm, qTokens, normsCandidatos[i]);
+        if (s > mejor) mejor = s;
+        if (mejor === 100) break;
+      }
+      return mejor;
+    }
+
+    // Badge de color según el puntaje, para leer el resultado de un vistazo.
+    function badgeSimilitud(pct) {
+      const span = document.createElement("span");
+      const color = pct >= 90 ? "bg-red-100 text-red-800"
+        : pct >= 75 ? "bg-amber-100 text-amber-800"
+        : "bg-slate-200 text-slate-700";
+      span.className = "ml-2 inline-block px-1.5 py-0.5 rounded text-[11px] font-semibold align-middle " + color;
+      span.textContent = pct + "%";
+      return span;
+    }
+
+    function umbralSimilitud() {
+      return parseInt($("fltSimilitud").value, 10) || 70;
     }
 
     // Carga tbl_Personas + catálogos una sola vez y los cachea. Devuelve la
@@ -1534,7 +1741,9 @@
 
       const val = (v, col) => String(v[idx[col]] ?? "");
 
-      const filas = datosCargados.filas.filter((fila) => {
+      // Primero los filtros exactos (baratos), y sobre lo que sobreviva se
+      // calcula la similitud, que es lo caro.
+      let filas = datosCargados.filas.filter((fila) => {
         const v = fila.values[0];
         if (!incluirEliminados && val(v, "tipo_pep") === "Eliminado") return false;
         if (fEstatus && val(v, "estatus") !== fEstatus) return false;
@@ -1542,12 +1751,27 @@
         if (fEntidad && val(v, "entidad_federativa") !== fEntidad) return false;
         if (fCargo && val(v, "cargo_id") !== fCargo) return false;
         if (fDep && val(v, "dependencia_efectiva_id") !== fDep) return false;
-        if (!q) return true;
-        // Busca en nombre, nombre_normalizado y el propio id.
-        return normTexto(val(v, "nombre_completo")).includes(q) ||
-          normTexto(val(v, "nombre_normalizado")).includes(q) ||
-          normTexto(val(v, "persona_id")).includes(q);
+        return true;
       });
+
+      // Similitud difusa contra el nombre (solo si se escribió algo).
+      const puntajes = new Map();
+      if (q) {
+        const umbral = umbralSimilitud();
+        const qNorm = simNorm(searchInput.value);
+        const qTokens = qNorm.split(" ");
+        filas = filas.filter((fila) => {
+          const v = fila.values[0];
+          // Un id tecleado tal cual siempre entra (búsqueda directa por clave).
+          if (normTexto(val(v, "persona_id")).includes(q)) { puntajes.set(fila, 100); return true; }
+          const pct = mejorSimilitud(qNorm, qTokens, [simNorm(val(v, "nombre_completo"))]);
+          if (pct < umbral) return false;
+          puntajes.set(fila, pct);
+          return true;
+        });
+        // Más parecido primero.
+        filas.sort((a, b) => (puntajes.get(b) || 0) - (puntajes.get(a) || 0));
+      }
 
       $("resPepCard").classList.remove("hidden");
       $("emptyState").classList.toggle("hidden", filas.length > 0);
@@ -1580,6 +1804,12 @@
             span.className = "inline-block px-2 py-0.5 rounded-full text-xs font-medium " + claseEstatus(valor);
             span.textContent = valor != null ? valor : "—";
             td.appendChild(span);
+          } else if (nombreCol === "nombre_completo") {
+            // Nombre + badge con el % de similitud (si hubo búsqueda por nombre).
+            td.className = claseCelda;
+            td.textContent = valor != null ? valor : "—";
+            const pct = puntajes.get(fila);
+            if (pct !== undefined) td.appendChild(badgeSimilitud(pct));
           } else if (nombreCol === "cargo_id" || nombreCol === "dependencia_efectiva_id") {
             // Mostramos el nombre legible del catálogo (con el id en tooltip),
             // que es lo útil al leer resultados.
@@ -1688,6 +1918,18 @@
           if (!resp.ok) continue;
           const buf = await talvezGunzip(await resp.arrayBuffer());
           const registros = adaptador(decodificarBuffer(buf));
+
+          // Se normaliza UNA vez el nombre y cada alias por separado. Sin
+          // esto habría que normalizar decenas de miles de nombres en cada
+          // búsqueda, que es lo que la volvería inusable.
+          registros.forEach((r) => {
+            const partes = [r.nombre_principal];
+            if (r.alias) String(r.alias).split(";").forEach((a) => partes.push(a));
+            r._norms = partes.map(simNorm).filter(Boolean);
+          });
+          // El corpus IDF crece con cada lista: los tokens raros pesan más.
+          indexarIDF(registros.map((r) => (r._norms && r._norms[0]) || ""));
+
           cacheRegistrosFuente[clave] = registros;
           return registros;
         } catch (err) {
@@ -1731,6 +1973,10 @@
         return act && obtenerAdaptador(l);
       });
 
+      const umbral = umbralSimilitud();
+      const qNorm = simNorm(searchInput.value);
+      const qTokens = qNorm.split(" ");
+
       let total = 0, fallidas = 0;
       for (let i = 0; i < activas.length; i++) {
         const lista = activas[i];
@@ -1745,13 +1991,17 @@
         }
         if (!registros) { fallidas++; continue; }
 
-        // Coincidencia por nombre principal o por cualquiera de los alias.
-        const hits = registros.filter((r) =>
-          normTexto(r.nombre_principal).includes(q) || normTexto(r.alias).includes(q));
+        // Similitud contra el nombre principal y cada alias; se queda el mejor.
+        const hits = [];
+        registros.forEach((r) => {
+          const pct = mejorSimilitud(qNorm, qTokens, r._norms || []);
+          if (pct >= umbral) hits.push({ r, pct });
+        });
+        hits.sort((a, b) => b.pct - a.pct); // más parecido primero
 
         // Se pintan los resultados de cada lista en cuanto están listos,
         // en vez de esperar a que terminen las 13.
-        hits.forEach((r) => tbody.appendChild(filaInternacional(etiqueta, r)));
+        hits.forEach((h) => tbody.appendChild(filaInternacional(etiqueta, h.r, h.pct)));
         total += hits.length;
         if (total > 0) $("intTableWrap").classList.remove("hidden");
       }
@@ -1765,7 +2015,7 @@
     }
 
     // Construye una fila de la tabla de resultados internacionales.
-    function filaInternacional(etiquetaLista, r) {
+    function filaInternacional(etiquetaLista, r, pct) {
       const tr = document.createElement("tr");
       tr.className = "even:bg-slate-50 hover:bg-blue-50/40 transition";
       const celdas = [
@@ -1783,6 +2033,8 @@
         const texto = (val === undefined || val === null || val === "") ? "—" : String(val);
         td.textContent = texto;
         if (texto !== "—") td.title = texto;
+        // El % de similitud va junto al nombre (columna 1).
+        if (i === 1 && pct !== undefined) td.appendChild(badgeSimilitud(pct));
         tr.appendChild(td);
       });
       return tr;
