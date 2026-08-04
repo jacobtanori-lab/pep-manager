@@ -893,7 +893,7 @@
       // Ninguna se espeja (ver nota de licencia en parseOpenSanctionsSimple).
       INTERPOL: parseOpenSanctionsSimple,  // Interpol Red Notices (~6,405)
       DEA: parseOpenSanctionsSimple,       // US DEA Fugitives (~536)
-      FBI: parseOpenSanctionsSimple,       // US FBI Most Wanted (~481)
+      FBI: parseFBI,                       // FBI Wanted oficial (api.fbi.gov, ~865 buscados reales, dominio público)
       // Bancos multilaterales de desarrollo. Por el acuerdo de
       // inhabilitación cruzada (BM/BID/AfDB/ADB/EBRD se reconocen las
       // sanciones entre sí), una misma empresa puede aparecer en ambas
@@ -4085,6 +4085,64 @@
       if (registros.length === 0) {
         throw new Error("El CSV del SAT se leyó pero no se encontraron contribuyentes con RFC.");
       }
+      return registros;
+    }
+
+    // ---- Adaptador: JSON de la Wanted API del FBI (oficial) ----
+    // Fuente: api.fbi.gov/wanted/v1/list — API pública documentada del FBI
+    // (sin key; el paginado es su uso previsto). El contenido del gobierno de
+    // EE.UU. es dominio público (17 USC §105), así que SÍ se puede espejar
+    // (carril de gobierno, como OFAC/UK). El GitHub Action pagina las ~61
+    // páginas, arma un solo data/FBI.json.gz y lo espeja; aquí solo se parsea.
+    //
+    // FILTRO CLAVE: la lista del FBI incluye VÍCTIMAS (person_classification
+    // = "Victim", p. ej. personas desaparecidas) y casos "Seeking Information"
+    // (eventos sin persona identificada). Meter a una víctima en una lista de
+    // "buscados" para screening sería un error grave, así que solo se quedan
+    // los sujetos reales: person_classification == "Main" y subjects sin
+    // "Seeking Information".
+    function parseFBI(textoCrudo) {
+      let data;
+      try { data = JSON.parse(textoCrudo); }
+      catch (e) { throw new Error("El archivo del FBI no es JSON válido."); }
+      const items = (data && data.items) ? data.items : [];
+      if (!items.length) throw new Error("El JSON del FBI no trae 'items'. ¿Se generó el espejo?");
+
+      const quitarHtml = (s) => String(s || "")
+        .replace(/<[^>]+>/g, " ").replace(/&[a-z]+;/gi, " ").replace(/\s+/g, " ").trim();
+      const lista = (a) => Array.isArray(a) ? a.filter(Boolean).join("; ") : (a ? String(a) : "");
+
+      const registros = [];
+      items.forEach((it) => {
+        if (it.person_classification !== "Main") return;          // fuera víctimas
+        const subj = lista(it.subjects);
+        if (/Seeking Information/i.test(subj)) return;            // fuera casos/eventos
+        const nombre = String(it.title || "").trim();
+        if (!nombre) return;
+
+        const notas = [
+          quitarHtml(it.caution),
+          it.reward_text ? "Recompensa: " + quitarHtml(it.reward_text) : "",
+          it.field_offices ? "Oficina FBI: " + lista(it.field_offices) : "",
+          it.url ? "Ficha: " + it.url : "",
+        ].filter(Boolean).join(" | ");
+
+        registros.push({
+          registro_id: "FBI-" + (it.uid || registros.length),
+          tipo_sujeto: "Persona",
+          nombre_principal: nombre,
+          alias: lista(it.aliases),
+          nacionalidad: [lista(it.nationality), lista(it.possible_countries)].filter(Boolean).join("; "),
+          fecha_nacimiento: lista(it.dates_of_birth_used),
+          id_original: it.uid || "",
+          programa_motivo: subj,
+          fecha_fuente: String(it.publication || "").split("T")[0],
+          estatus: (String(it.status).toLowerCase() === "captured") ? "Histórico" : "Activo",
+          notas: notas,
+        });
+      });
+
+      if (!registros.length) throw new Error("El JSON del FBI se leyó pero no quedó ningún buscado tras filtrar.");
       return registros;
     }
 
