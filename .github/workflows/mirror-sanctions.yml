@@ -46,6 +46,36 @@ jobs:
             fi
           done
 
+      - name: FBI (api.fbi.gov paginado) -> data/FBI.json.gz
+        run: |
+          set -uo pipefail
+          mkdir -p data
+          UA="pep-manager-mirror/1.0 (+https://github.com/jacobtanori-lab/pep-manager)"
+          BASE="https://api.fbi.gov/wanted/v1/list"
+          TMP="$(mktemp -d)"
+          if ! curl -sS --fail --retry 3 --max-time 120 -A "$UA" "$BASE?page=1" -o "$TMP/p_1.json"; then
+            echo "::warning::FBI pagina 1 fallo; se conserva la copia previa"; rm -rf "$TMP"; exit 0
+          fi
+          total=$(jq '.total // 0' "$TMP/p_1.json")
+          per=$(jq '.items | length' "$TMP/p_1.json")
+          if [ "$per" -eq 0 ]; then echo "::warning::FBI sin items; se conserva la copia previa"; rm -rf "$TMP"; exit 0; fi
+          pages=$(( (total + per - 1) / per ))
+          echo "FBI total=$total per=$per pages=$pages"
+          for p in $(seq 2 "$pages"); do
+            sleep 0.4
+            curl -sS --fail --retry 3 --max-time 120 -A "$UA" "$BASE?page=$p" -o "$TMP/p_$p.json" \
+              || echo "::warning::FBI pagina $p fallo"
+          done
+          jq -s '{items: ([.[].items[] | {uid,title,aliases,subjects,person_classification,status,nationality,possible_countries,dates_of_birth_used,publication,caution,reward_text,url,field_offices}] | sort_by(.uid // ""))}' "$TMP"/p_*.json > "$TMP/fbi.json"
+          n=$(jq '.items | length' "$TMP/fbi.json")
+          echo "FBI ensamblado: $n items"
+          if [ "$n" -lt 500 ]; then
+            echo "::warning::FBI solo $n (<500); se conserva la copia previa"; rm -rf "$TMP"; exit 0
+          fi
+          gzip -9 -nc "$TMP/fbi.json" > data/FBI.json.gz
+          echo "OK FBI -> data/FBI.json.gz ($(wc -c < data/FBI.json.gz) bytes)"
+          rm -rf "$TMP"
+
       - name: Commit y push si hubo cambios
         run: |
           git config user.name "sanctions-mirror-bot"
