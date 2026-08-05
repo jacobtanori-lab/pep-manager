@@ -893,7 +893,7 @@
       // Ninguna se espeja (ver nota de licencia en parseOpenSanctionsSimple).
       INTERPOL: parseOpenSanctionsSimple,  // Interpol Red Notices (~6,405)
       DEA: parseOpenSanctionsSimple,       // US DEA Fugitives (~536)
-      FBI: parseFBI,                       // FBI Wanted oficial (api.fbi.gov, ~865 buscados reales, dominio público)
+      FBI: parseFBI,                       // FBI Wanted oficial (api.fbi.gov, ~557 buscados reales sin víctimas/desaparecidos, dominio público)
       // Bancos multilaterales de desarrollo. Por el acuerdo de
       // inhabilitación cruzada (BM/BID/AfDB/ADB/EBRD se reconocen las
       // sanciones entre sí), una misma empresa puede aparecer en ambas
@@ -4112,11 +4112,18 @@
         .replace(/<[^>]+>/g, " ").replace(/&[a-z]+;/gi, " ").replace(/\s+/g, " ").trim();
       const lista = (a) => Array.isArray(a) ? a.filter(Boolean).join("; ") : (a ? String(a) : "");
 
+      // Categorías que NO son buscados sino víctimas/casos sin resolver: el
+      // FBI mezcla desaparecidos y no identificados con los perpetradores.
+      // "Missing Persons" cubre tanto ViCAP como "Kidnappings and Missing
+      // Persons". Meterlos en una lista de screening marcaría a víctimas.
+      const reVictima = /Missing Persons|Unidentified Persons|ViCAP Homicides/i;
+
       const registros = [];
       items.forEach((it) => {
-        if (it.person_classification !== "Main") return;          // fuera víctimas
+        if (it.person_classification !== "Main") return;          // fuera víctimas marcadas
         const subj = lista(it.subjects);
-        if (/Seeking Information/i.test(subj)) return;            // fuera casos/eventos
+        if (/Seeking Information/i.test(subj)) return;            // fuera casos/eventos sin persona
+        if (reVictima.test(subj)) return;                        // fuera desaparecidos/no identificados
         const nombre = String(it.title || "").trim();
         if (!nombre) return;
 
