@@ -6,3 +6,7 @@ Thumbs.db
 
 # Descargas parciales del GitHub Action de espejo de listas
 data/*.tmp
+
+# Carpetas locales de revision de fotos (no se versionan)
+fotos_ine_revision/
+fotos_nombre_revision/

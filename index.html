@@ -1757,6 +1757,7 @@
                 mapa[id] = {
                   autor: dato(filas[i], "autor"),
                   licencia: dato(filas[i], "licencia"),
+                  fuente: dato(filas[i], "fuente"),
                   pagina: dato(filas[i], "pagina_commons") || dato(filas[i], "pagina_wikipedia"),
                 };
               }
@@ -1802,7 +1803,7 @@
       const partes = [];
       if (info.autor) partes.push(info.autor);
       if (info.licencia) partes.push(info.licencia);
-      partes.push("vía Wikimedia Commons");
+      partes.push(info.fuente || "vía Wikimedia Commons");
       return partes.join(" · ");
     }
 
