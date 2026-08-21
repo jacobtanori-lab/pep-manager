@@ -901,6 +901,7 @@
       CA_TERROR: parseTerrorOrgs,          // Public Safety Canada - entidades listadas (~89)
       US_FTO: parseTerrorOrgs,             // US State Dept - Foreign Terrorist Organizations (~99)
       UK_PROSCRIBED: parseTerrorOrgs,      // UK Home Office - proscribed terrorist organisations (~94)
+      USSS: parseUSSS,                     // US Secret Service - Most Wanted (~32, cibercrimen/financiero; scrape del sitio vía navegador; dominio público; espejo estático)
       // Bancos multilaterales de desarrollo. Por el acuerdo de
       // inhabilitación cruzada (BM/BID/AfDB/ADB/EBRD se reconocen las
       // sanciones entre sí), una misma empresa puede aparecer en ambas
@@ -4243,6 +4244,46 @@
         });
       });
       if (!registros.length) throw new Error("El JSON se leyó pero no quedó ninguna organización.");
+      return registros;
+    }
+
+    // ---- Adaptador: US Secret Service "Most Wanted Fugitives" ----
+    // Espejo estático data/USSS.json.gz (scraping del sitio, con WAF Akamai que
+    // bloquea curl/PowerShell; refresh re-corriendo el scrape del navegador).
+    // Dominio público (EE. UU.). Campos compactos: n,a,d,nat,rw,fo,ph,o,u.
+    function parseUSSS(textoCrudo) {
+      let data;
+      try { data = JSON.parse(textoCrudo); }
+      catch (e) { throw new Error("El archivo del Secret Service no es JSON válido."); }
+      const items = (data && data.items) ? data.items : [];
+      if (!items.length) throw new Error("El JSON del Secret Service no trae 'items'. ¿Se generó el espejo?");
+      const registros = [];
+      items.forEach((it) => {
+        const nombre = String(it.n || "").trim();
+        if (!nombre) return;
+        const slug = String(it.u || "").split("/").filter(Boolean).pop() || "";
+        const notas = [
+          it.rw ? "Recompensa: " + it.rw : "",
+          it.fo ? "Oficina USSS: " + it.fo : "",
+          it.ph ? "Descripción: " + it.ph : "",
+          it.o ? String(it.o) : "",
+          it.u ? "Ficha: https://www.secretservice.gov" + it.u : "",
+        ].filter(Boolean).join(" | ");
+        registros.push({
+          registro_id: "USSS-" + (slug || registros.length),
+          tipo_sujeto: "Persona",
+          nombre_principal: nombre,
+          alias: String(it.a || "").trim(),
+          nacionalidad: String(it.nat || "").trim(),
+          fecha_nacimiento: String(it.d || "").trim(),
+          id_original: slug,
+          programa_motivo: "Most Wanted - U.S. Secret Service" + (it.rw ? " (Recompensa " + it.rw + ")" : ""),
+          fecha_fuente: "",
+          estatus: "Activo",
+          notas: notas,
+        });
+      });
+      if (!registros.length) throw new Error("El JSON del Secret Service se leyó pero no quedó ningún registro.");
       return registros;
     }
 
