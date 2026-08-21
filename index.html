@@ -902,6 +902,9 @@
       US_FTO: parseTerrorOrgs,             // US State Dept - Foreign Terrorist Organizations (~99)
       UK_PROSCRIBED: parseTerrorOrgs,      // UK Home Office - proscribed terrorist organisations (~94)
       USSS: parseUSSS,                     // US Secret Service - Most Wanted (~32, cibercrimen/financiero; scrape del sitio vía navegador; dominio público; espejo estático)
+      // "Most wanted" adicionales (personas). Espejos estáticos en data/.
+      ICE: parseICE,                       // ICE Most Wanted (~33; migración/fugitivos criminales; scrape del navegador; dominio público)
+      NCA: parseNCA,                       // UK National Crime Agency - Most Wanted (~21; se baja por PowerShell; Open Government Licence v3.0)
       // Bancos multilaterales de desarrollo. Por el acuerdo de
       // inhabilitación cruzada (BM/BID/AfDB/ADB/EBRD se reconocen las
       // sanciones entre sí), una misma empresa puede aparecer en ambas
@@ -4284,6 +4287,86 @@
         });
       });
       if (!registros.length) throw new Error("El JSON del Secret Service se leyó pero no quedó ningún registro.");
+      return registros;
+    }
+
+    // ---- Adaptador: ICE "Most Wanted" (EE. UU.) ----
+    // Espejo estático data/ICE.json.gz (scraping del sitio, con WAF que bloquea
+    // curl/PowerShell; refresh re-corriendo el scrape del navegador). Dominio
+    // público (obra del gobierno de EE. UU.). Campos compactos por ficha (Drupal):
+    // n,a,g,nat,pob,age,w,rw,loc,phys,s(resumen),ph,u.
+    function parseICE(textoCrudo) {
+      let data;
+      try { data = JSON.parse(textoCrudo); }
+      catch (e) { throw new Error("El archivo de ICE no es JSON válido."); }
+      const items = (data && data.items) ? data.items : [];
+      if (!items.length) throw new Error("El JSON de ICE no trae 'items'. ¿Se generó el espejo?");
+      const registros = [];
+      items.forEach((it) => {
+        const nombre = String(it.n || "").trim();
+        if (!nombre) return;
+        const slug = String(it.slug || it.u || "").split("/").filter(Boolean).pop() || "";
+        const notas = [
+          it.s ? String(it.s) : "",
+          it.loc ? "Última ubicación conocida: " + it.loc : "",
+          it.rw ? "Recompensa: " + it.rw : "",
+          it.age ? "Edad: " + it.age : "",
+          it.pob ? "Lugar de nacimiento: " + it.pob : "",
+          it.phys ? "Descripción física: " + it.phys : "",
+          it.u ? "Ficha: " + it.u : "",
+        ].filter(Boolean).join(" | ");
+        registros.push({
+          registro_id: "ICE-" + (slug || registros.length),
+          tipo_sujeto: "Persona",
+          nombre_principal: nombre,
+          alias: String(it.a || "").trim(),
+          nacionalidad: String(it.nat || "").trim(),
+          fecha_nacimiento: "",
+          id_original: slug,
+          programa_motivo: String(it.w || "").trim() || "Most Wanted (ICE)",
+          fecha_fuente: "",
+          estatus: "Activo",
+          notas: notas,
+        });
+      });
+      if (!registros.length) throw new Error("El JSON de ICE se leyó pero no quedó ningún registro.");
+      return registros;
+    }
+
+    // ---- Adaptador: UK National Crime Agency "Most Wanted" ----
+    // Espejo estático data/NCA.json.gz. A diferencia de los otros "most wanted"
+    // de EE. UU., este SÍ se baja por PowerShell (el sitio no tiene WAF); se
+    // espeja igual para tener el dato estable. Open Government Licence v3.0.
+    // Campos compactos del listado: n(nombre), w(motivo), ph(foto), u(ficha).
+    function parseNCA(textoCrudo) {
+      let data;
+      try { data = JSON.parse(textoCrudo); }
+      catch (e) { throw new Error("El archivo de la NCA no es JSON válido."); }
+      const items = (data && data.items) ? data.items : [];
+      if (!items.length) throw new Error("El JSON de la NCA no trae 'items'. ¿Se generó el espejo?");
+      const registros = [];
+      items.forEach((it) => {
+        const nombre = String(it.n || "").trim();
+        if (!nombre) return;
+        const slug = String(it.u || "").split("/").filter(Boolean).pop() || "";
+        const notas = [
+          it.u ? "Ficha: " + it.u : "",
+        ].filter(Boolean).join(" | ");
+        registros.push({
+          registro_id: "NCA-" + (slug || registros.length),
+          tipo_sujeto: "Persona",
+          nombre_principal: nombre,
+          alias: "",
+          nacionalidad: "",
+          fecha_nacimiento: "",
+          id_original: slug,
+          programa_motivo: String(it.w || "").trim() || "Most Wanted (NCA, Reino Unido)",
+          fecha_fuente: "",
+          estatus: "Activo",
+          notas: notas,
+        });
+      });
+      if (!registros.length) throw new Error("El JSON de la NCA se leyó pero no quedó ningún registro.");
       return registros;
     }
 
