@@ -894,6 +894,7 @@
       INTERPOL: parseOpenSanctionsSimple,  // Interpol Red Notices (~6,405)
       DEA: parseOpenSanctionsSimple,       // US DEA Fugitives (~536)
       FBI: parseFBI,                       // FBI Wanted oficial (api.fbi.gov, ~557 buscados reales sin víctimas/desaparecidos, dominio público)
+      USMARSHALS: parseUSMarshals,         // US Marshals "Profiled Fugitives" (~210, scrape del sitio vía navegador; dominio público; espejo estático, sin auto-refresh por WAF)
       // Bancos multilaterales de desarrollo. Por el acuerdo de
       // inhabilitación cruzada (BM/BID/AfDB/ADB/EBRD se reconocen las
       // sanciones entre sí), una misma empresa puede aparecer en ambas
@@ -4151,6 +4152,51 @@
       });
 
       if (!registros.length) throw new Error("El JSON del FBI se leyó pero no quedó ningún buscado tras filtrar.");
+      return registros;
+    }
+
+    // ---- Adaptador: US Marshals "Profiled Fugitives" ----
+    // Espejo estático data/USMARSHALS.json.gz (armado por scraping del sitio,
+    // que tiene WAF y bloquea curl/PowerShell/WebFetch; se refresca re-corriendo
+    // el scrape del navegador, NO por el GitHub Action). Dominio público (obra
+    // del gobierno de EE. UU.). Campos compactos: n,a,c,d,w,ca,rw,pob,ph,ws,o,u.
+    function parseUSMarshals(textoCrudo) {
+      let data;
+      try { data = JSON.parse(textoCrudo); }
+      catch (e) { throw new Error("El archivo de US Marshals no es JSON válido."); }
+      const items = (data && data.items) ? data.items : [];
+      if (!items.length) throw new Error("El JSON de US Marshals no trae 'items'. ¿Se generó el espejo?");
+      const registros = [];
+      items.forEach((it) => {
+        const nombre = String(it.n || "").trim();
+        if (!nombre) return;
+        const slug = String(it.u || "").split("/").filter(Boolean).pop() || "";
+        const alias = String(it.a || "").trim();
+        const notas = [
+          it.w ? "Buscado en: " + it.w : "",
+          it.ca ? "Precaución: " + it.ca : "",
+          it.ph ? "Descripción: " + it.ph : "",
+          it.pob ? "Lugar de nacimiento: " + it.pob : "",
+          it.rw ? "Recompensa: " + it.rw : "",
+          it.ws ? "Buscado desde: " + it.ws : "",
+          it.o ? String(it.o) : "",
+          it.u ? "Ficha: https://www.usmarshals.gov" + it.u : "",
+        ].filter(Boolean).join(" | ");
+        registros.push({
+          registro_id: "USMS-" + (slug || registros.length),
+          tipo_sujeto: "Persona",
+          nombre_principal: nombre,
+          alias: (alias.toLowerCase() === "none known") ? "" : alias,
+          nacionalidad: "",
+          fecha_nacimiento: String(it.d || "").trim(),
+          id_original: slug,
+          programa_motivo: it.c ? ("Buscado por: " + String(it.c)) : "Fugitivo (US Marshals)",
+          fecha_fuente: String(it.ws || "").trim(),
+          estatus: "Activo",
+          notas: notas,
+        });
+      });
+      if (!registros.length) throw new Error("El JSON de US Marshals se leyó pero no quedó ningún registro.");
       return registros;
     }
 
