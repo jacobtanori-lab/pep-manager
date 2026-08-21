@@ -895,6 +895,12 @@
       DEA: parseOpenSanctionsSimple,       // US DEA Fugitives (~536)
       FBI: parseFBI,                       // FBI Wanted oficial (api.fbi.gov, ~557 buscados reales sin víctimas/desaparecidos, dominio público)
       USMARSHALS: parseUSMarshals,         // US Marshals "Profiled Fugitives" (~210, scrape del sitio vía navegador; dominio público; espejo estático, sin auto-refresh por WAF)
+      // Organizaciones terroristas listadas (entidades, no personas). Mismo
+      // adaptador genérico; el origen lo da el lista_id. Dominio público
+      // (CA/US) u Open Government Licence (UK). Espejos estáticos en data/.
+      CA_TERROR: parseTerrorOrgs,          // Public Safety Canada - entidades listadas (~89)
+      US_FTO: parseTerrorOrgs,             // US State Dept - Foreign Terrorist Organizations (~99)
+      UK_PROSCRIBED: parseTerrorOrgs,      // UK Home Office - proscribed terrorist organisations (~94)
       // Bancos multilaterales de desarrollo. Por el acuerdo de
       // inhabilitación cruzada (BM/BID/AfDB/ADB/EBRD se reconocen las
       // sanciones entre sí), una misma empresa puede aparecer en ambas
@@ -4197,6 +4203,46 @@
         });
       });
       if (!registros.length) throw new Error("El JSON de US Marshals se leyó pero no quedó ningún registro.");
+      return registros;
+    }
+
+    // ---- Adaptador genérico: listas de ORGANIZACIONES terroristas ----
+    // Compartido por CA_TERROR (Public Safety Canada), US_FTO (US State Dept) y
+    // UK_PROSCRIBED (UK Home Office). Espejos estáticos en data/<id>.json.gz con
+    // items compactos {n:nombre, a:alias, dt:fecha, ds:descripcion}. No fija
+    // lista_origen: lo hereda del lista_id. tipo_sujeto = "Organización".
+    function parseTerrorOrgs(textoCrudo) {
+      let data;
+      try { data = JSON.parse(textoCrudo); }
+      catch (e) { throw new Error("El archivo de organizaciones terroristas no es JSON válido."); }
+      const items = (data && data.items) ? data.items : [];
+      if (!items.length) throw new Error("El JSON no trae 'items'. ¿Se generó el espejo?");
+      const slug = (s) => String(s || "").toLowerCase()
+        .normalize("NFD").replace(/[̀-ͯ]/g, "")
+        .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
+      const registros = [];
+      items.forEach((it) => {
+        const nombre = String(it.n || "").trim();
+        if (!nombre) return;
+        const notas = [
+          it.a ? "Alias: " + it.a : "",
+          it.ds ? String(it.ds) : "",
+        ].filter(Boolean).join(" | ");
+        registros.push({
+          registro_id: "ORG-" + (slug(nombre) || registros.length),
+          tipo_sujeto: "Organización",
+          nombre_principal: nombre,
+          alias: String(it.a || "").trim(),
+          nacionalidad: "",
+          fecha_nacimiento: "",
+          id_original: slug(nombre),
+          programa_motivo: "Organización terrorista listada",
+          fecha_fuente: String(it.dt || "").trim(),
+          estatus: "Activo",
+          notas: notas,
+        });
+      });
+      if (!registros.length) throw new Error("El JSON se leyó pero no quedó ninguna organización.");
       return registros;
     }
 
