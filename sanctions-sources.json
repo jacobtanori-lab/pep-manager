@@ -37,9 +37,7 @@
   {
     "lista_id": "SFP",
     "file": "SFP.csv",
-    "url": "https://repodatos.atdt.gob.mx/api_update/sabg/servidores_publicos_sancionados_vigentes/datos_abiertos_rsps_agosto.csv",
-    "url_pagina": "https://www.datos.gob.mx/dataset/servidores_publicos_sancionados_vigentes",
-    "url_patron": "https://repodatos\\.atdt\\.gob\\.mx/[^\"']*\\.csv",
-    "nota": "SABG rota el nombre del archivo (antes servidores_sancionados_marzo.csv, luego datos_abiertos_rsps_agosto.csv). url_pagina + url_patron resuelven el enlace real del boton Descargar en cada corrida; el campo url es solo el respaldo."
+    "url": "https://www.datos.gob.mx/datastore/dump/d5da6695-1a3b-4a86-93e2-4297e9463370?fields=expediente,fecha_resolucion,apellido_paterno,apellido_materno,nombre,autoridad,dependencia,sancion_impuesta,causa,inicio,fin,ley",
+    "nota": "Se sirve desde el datastore CKAN de datos.gob.mx, NO desde repodatos.atdt.gob.mx: ese host devuelve 403 a curl, a PowerShell y al runner de GitHub (verificado el 19-nov-2026: curl (22) 403) aunque si entrega el archivo a un navegador normal. El dump de CKAN es el MISMO dato (435 filas, cero registros distintos al archivo oficial de agosto-2026) y si baja con el UA del mirror. El parametro fields quita la columna _id que CKAN antepone, dejando el CSV identico byte a byte al oficial salvo el BOM, que el espejo tampoco traia. resource_id del dataset servidores_publicos_sancionados_vigentes. Ojo al verificar frescura: SABG rota el nombre del archivo en repodatos (servidores_sancionados_marzo.csv -> datos_abiertos_rsps_agosto.csv) y el datastore podria quedarse atras si recargan el archivo sin recargar CKAN; contrastar de vez en cuando contra https://www.datos.gob.mx/dataset/servidores_publicos_sancionados_vigentes"
   }
 ]
