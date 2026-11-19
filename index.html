@@ -3993,6 +3993,10 @@
       // El tipo de buque también viene bilingüe, pero separado por " | ":
       // "General Cargo/Multi Purpose | Cargo classique/navire polyvalent".
       const antesDePipe = (s) => String(s || "").split(" | ")[0].trim();
+      // El origen trae basura de captura: "Venezuela ", "1, Part 1 ",
+      // "1,Part 3". Sin esto, el mismo régimen o anexo cuenta como dos.
+      const limpiar = (s) => String(s || "")
+        .replace(/\s*,\s*/g, ", ").replace(/\s+/g, " ").trim();
 
       const registros = records.map((el, i) => {
         const entidad = t(el, T.entidad);
@@ -4003,11 +4007,29 @@
           ? entidad
           : [t(el, T.nombre), t(el, T.apellido)].filter(Boolean).join(" ").trim();
 
-        const anexo = t(el, T.anexo);
-        const item = t(el, T.item);
+        const anexo = limpiar(t(el, T.anexo));
+        const item = limpiar(t(el, T.item));
         const imo = t(el, T.imo);
         const titulo = antesDePipe(t(el, T.titulo));
         const construido = esEntidad ? t(el, T.nacimiento) : "";
+        const regimen = limpiar(soloIngles(t(el, T.pais)));
+
+        // El XML NO trae ningún campo de descripción: son 11 etiquetas y
+        // ninguna es narrativa (TitleOrShipType solo cubre 63 personas, con
+        // grados militares). Así que la descripción se COMPONE con lo que
+        // sí hay, para que notas nunca quede vacía. No se nombra el
+        // reglamento concreto a propósito: varios países tienen reglamentos
+        // bajo dos leyes a la vez (United Nations Act y SEMA) y asignar uno
+        // solo sería inventar una cita legal. "Autónoma" sí aplica a todo
+        // el archivo: es la Consolidated Canadian Autonomous Sanctions List,
+        // e incluye tanto SEMA como la JVCFOA, ninguna derivada de la ONU.
+        const cita = [
+          anexo ? "anexo " + anexo : "",
+          item ? "artículo " + item : "",
+        ].filter(Boolean).join(", ");
+        const descripcion = "Sanción autónoma de Canadá" +
+          (regimen ? " · régimen: " + regimen : "") +
+          (cita ? " · " + cita : "");
 
         return {
           registro_id: "CA_SEMA-" + String(i + 1).padStart(5, "0"),
@@ -4018,13 +4040,13 @@
           nacionalidad: "",
           fecha_nacimiento: esEntidad ? "" : t(el, T.nacimiento),
           id_original: [anexo, item].filter(Boolean).join(" / "),
-          programa_motivo: soloIngles(t(el, T.pais)),
+          programa_motivo: regimen,
           fecha_fuente: t(el, T.inscrito),
           notas: [
             titulo ? (esEntidad ? "Tipo: " : "Título: ") + titulo : "",
             imo ? "IMO: " + imo : "",
             construido ? "Construido: " + construido : "",
-            anexo ? "Anexo: " + anexo : "",
+            descripcion,
           ].filter(Boolean).join(" | "),
         };
       });
