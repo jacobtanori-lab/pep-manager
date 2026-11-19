@@ -171,6 +171,100 @@ jobs:
           marcar_ok FBI
           rm -rf "$TMP"
 
+      # Se ensambla aqui (y no como una fuente mas de sanctions-sources.json)
+      # porque son 199 archivos, uno por pais. La URL unica que sirve el sitio
+      # (page-data/sq/d/<hash>.json) trae los nombres SIN el cargo, y un PEP
+      # sin cargo no sirve para nada; por pais el cargo viene al 100%.
+      - name: CIA World Leaders (199 paises) -> data/CIA_WL.json.gz
+        run: |
+          set -uo pipefail
+          mkdir -p data
+          [ -f "$ESTADO" ] || echo '{}' > "$ESTADO"
+          TMP_ESTADO="$(mktemp)"
+          HOY=$(date -u +%F)
+          AHORA=$(date -u +%s)
+          marcar_ok() {
+            jq --arg id "$1" 'del(.[$id])' "$ESTADO" > "$TMP_ESTADO" && mv "$TMP_ESTADO" "$ESTADO"
+          }
+          marcar_falla() {
+            jq --arg id "$1" --arg f "$HOY" --argjson ts "$AHORA" --arg m "$2" \
+               '.[$id] = ((.[$id] // {})
+                          | .fallando_desde    = (.fallando_desde    // $f)
+                          | .fallando_desde_ts = (.fallando_desde_ts // $ts)
+                          | .ultimo_error      = $m)' \
+               "$ESTADO" > "$TMP_ESTADO" && mv "$TMP_ESTADO" "$ESTADO"
+          }
+
+          UA="pep-manager-mirror/1.0"
+          BASE="https://www.cia.gov/resources/world-leaders"
+          TMP="$(mktemp -d)"
+
+          # Los slugs salen del sitemap OFICIAL, no de convertir el nombre del
+          # pais: hay casos como "korea-north" que no se adivinan bien.
+          if ! curl -sS --fail --retry 3 --max-time 120 -A "$UA" "$BASE/sitemap/sitemap-0.xml" -o "$TMP/sm.xml"; then
+            echo "::warning::CIA_WL: no se pudo leer el sitemap; se conserva la copia previa"
+            marcar_falla CIA_WL "sitemap fallo"; rm -rf "$TMP"; exit 0
+          fi
+          grep -oE 'foreign-governments/[a-z0-9-]+' "$TMP/sm.xml" | sed 's|.*/||' | sort -u > "$TMP/slugs.txt"
+          nslugs=$(wc -l < "$TMP/slugs.txt")
+          echo "CIA_WL: $nslugs paises en el sitemap"
+          if [ "$nslugs" -lt 150 ]; then
+            echo "::warning::CIA_WL: solo $nslugs paises (<150); se conserva la copia previa"
+            marcar_falla CIA_WL "solo $nslugs paises en el sitemap"; rm -rf "$TMP"; exit 0
+          fi
+
+          fallos=0
+          while read -r s; do
+            [ -n "$s" ] || continue
+            if ! curl -sS --fail --retry 2 --max-time 60 -A "$UA" \
+                 "$BASE/page-data/foreign-governments/$s/page-data.json" -o "$TMP/p_$s.json"; then
+              echo "::warning::CIA_WL: fallo el pais $s"
+              rm -f "$TMP/p_$s.json"
+              fallos=$((fallos + 1))
+            fi
+            sleep 0.25
+          done < "$TMP/slugs.txt"
+          echo "CIA_WL: paises que fallaron: $fallos"
+
+          # Un item por pais; cada grupo conserva su rotulo (Bosnia trae tres
+          # gobiernos; China separa Hong Kong y Macau). Se tiran los nombres
+          # vacios, que el origen si trae (p. ej. Afganistan).
+          if ! jq -s '{items: [ .[]
+            | .result.data.page
+            | { c: (.country // ""), code: (.code // ""), upd: (.date_updated // "") }
+              + (if ((.caveat // "") | length) > 0 then {cav: .caveat} else {} end)
+              + { g: ( [ {lbl: (.leaders_label   // ""), l: (.leaders   // [])},
+                         {lbl: (.leaders_2_label // ""), l: (.leaders_2 // [])},
+                         {lbl: (.leaders_3_label // ""), l: (.leaders_3 // [])} ]
+                       | map( { lbl: .lbl,
+                                l: ( .l | map(select(((.name // "") | gsub("^\\s+|\\s+$"; "")) != ""))
+                                        | map( {n: (.name | gsub("^\\s+|\\s+$"; ""))}
+                                               + (if ((.title     // "") | length) > 0 then {t: .title}     else {} end)
+                                               + (if ((.honorific // "") | length) > 0 then {h: .honorific} else {} end) ) ) } )
+                       | map(select((.l | length) > 0)) ) }
+            ] | sort_by(.c) }' "$TMP"/p_*.json > "$TMP/cia.json"; then
+            echo "::warning::CIA_WL: el ensamblado con jq fallo; se conserva la copia previa"
+            marcar_falla CIA_WL "jq fallo al ensamblar"; rm -rf "$TMP"; exit 0
+          fi
+          # Sin esto, un jq roto dejaria un cia.json invalido, las cuentas de
+          # abajo saldrian vacias y se comprimiria basura encima del espejo.
+          if ! jq -e . "$TMP/cia.json" > /dev/null 2>&1; then
+            echo "::warning::CIA_WL: el ensamblado no produjo JSON valido; se conserva la copia previa"
+            marcar_falla CIA_WL "ensamblado invalido"; rm -rf "$TMP"; exit 0
+          fi
+
+          paises=$(jq '.items | length' "$TMP/cia.json" 2>/dev/null || echo 0)
+          lideres=$(jq '[.items[].g[].l[]] | length' "$TMP/cia.json" 2>/dev/null || echo 0)
+          echo "CIA_WL ensamblado: $paises paises, $lideres lideres"
+          if [ "$paises" -lt 150 ] || [ "$lideres" -lt 4000 ]; then
+            echo "::warning::CIA_WL: $paises paises / $lideres lideres por debajo del minimo; se conserva la copia previa"
+            marcar_falla CIA_WL "$paises paises / $lideres lideres (minimo 150/4000)"; rm -rf "$TMP"; exit 0
+          fi
+          gzip -9 -nc "$TMP/cia.json" > data/CIA_WL.json.gz
+          echo "OK CIA_WL -> data/CIA_WL.json.gz ($(wc -c < data/CIA_WL.json.gz) bytes)"
+          marcar_ok CIA_WL
+          rm -rf "$TMP"
+
       - name: Commit y push si hubo cambios
         run: |
           git config user.name "sanctions-mirror-bot"
@@ -192,7 +286,9 @@ jobs:
           AHORA=$(date -u +%s)
           [ -f "$ESTADO" ] || echo '{}' > "$ESTADO"
 
-          ids="$(jq -r '.[].lista_id' sanctions-sources.json) FBI"
+          # Las que se ensamblan en su propio paso no estan en el JSON de
+          # fuentes, asi que se agregan a mano para que tambien se vigilen.
+          ids="$(jq -r '.[].lista_id' sanctions-sources.json) FBI CIA_WL"
           duros=0
           {
             echo "### Frescura del espejo"

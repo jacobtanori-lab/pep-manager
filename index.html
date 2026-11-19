@@ -891,6 +891,10 @@
       // Canada, SEMA, ~5,781 inscripciones: personas, entidades y buques).
       // Dominio público bajo Open Government Licence; se espeja en data/.
       CA_SEMA: parseCanadaSEMA,
+      // PEPs internacionales: jefes de Estado y gabinetes de 199 gobiernos
+      // (CIA World Leaders, ~5,853 cargos, semanal, dominio público).
+      // NO es una lista de sanciones: un match es señal de PEP, no adversa.
+      CIA_WL: parseCIAWorldLeaders,
       // OpenSanctions: todas usan el MISMO adaptador genérico de su CSV
       // "simple" (mismos 16 encabezados). Agregar otro dataset suyo = una
       // llave más aquí + su fila en CAT_Listas; no requiere código nuevo.
@@ -4056,6 +4060,71 @@
         throw new Error("El XML de Canadá se leyó pero ningún <record> trajo nombre ni entidad.");
       }
       return conNombre;
+    }
+
+    // ---- Adaptador: CIA World Leaders (PEPs internacionales) ----
+    // Directorio de jefes de Estado y gabinetes que la CIA publica y
+    // ACTUALIZA SEMANALMENTE: cia.gov/resources/world-leaders/. Dominio
+    // público (obra del gobierno de EE. UU.).
+    //
+    // OJO, esto NO es una lista de sanciones ni de delitos: estar aquí
+    // significa ocupar un cargo público, nada más. Un match es una señal de
+    // PEP para debida diligencia reforzada, nunca un hallazgo adverso. Por
+    // eso cada registro lo dice en notas.
+    //
+    // El espejo lo ensambla el Action recorriendo los 199 page-data.json,
+    // uno por país (ver el paso "CIA World Leaders" en mirror-sanctions.yml).
+    // La URL única que sirve el sitio trae los nombres SIN el cargo.
+    // Formato: {items:[{c,code,upd,cav?,g:[{lbl,l:[{n,t?,h?}]}]}]}
+    function parseCIAWorldLeaders(textoCrudo) {
+      let data;
+      try { data = JSON.parse(textoCrudo); }
+      catch (e) { throw new Error("El archivo de CIA World Leaders no es JSON válido."); }
+      const items = (data && data.items) ? data.items : [];
+      if (!items.length) throw new Error("El JSON no trae 'items'. ¿Se generó el espejo?");
+
+      const registros = [];
+      items.forEach((pais) => {
+        const codigo = String(pais.code || "").trim() || "XX";
+        const nombrePais = String(pais.c || "").trim();
+        // "2026-06-23 17:14:00" -> "2026-06-23"
+        const actualizado = String(pais.upd || "").trim().split(" ")[0];
+        let n = 0;
+        (pais.g || []).forEach((grupo) => {
+          const rotulo = String(grupo.lbl || "").trim();
+          (grupo.l || []).forEach((lider) => {
+            const nombre = String(lider.n || "").trim();
+            if (!nombre) return;
+            n++;
+            registros.push({
+              registro_id: "CIA_WL-" + codigo + "-" + String(n).padStart(3, "0"),
+              lista_origen: "CIA_WL",
+              tipo_sujeto: "Persona",
+              nombre_principal: nombre,
+              alias: "",
+              // Es el país del CARGO, no una nacionalidad verificada: casi
+              // siempre coinciden, pero el origen no afirma la nacionalidad.
+              nacionalidad: nombrePais,
+              fecha_nacimiento: "",
+              id_original: codigo,
+              programa_motivo: String(lider.t || "").trim(),
+              fecha_fuente: actualizado,
+              estatus: "Activo",
+              notas: [
+                "PEP por cargo público (no es sanción ni antecedente penal)",
+                "País del cargo: " + (nombrePais || "(sin país)"),
+                lider.h ? "Honorífico: " + String(lider.h).trim() : "",
+                rotulo ? "Ámbito: " + rotulo : "",
+                pais.cav ? "Nota de la CIA: " + String(pais.cav).trim() : "",
+                actualizado ? "Actualizado por la CIA: " + actualizado : "",
+              ].filter(Boolean).join(" | "),
+            });
+          });
+        });
+      });
+
+      if (!registros.length) throw new Error("El JSON se leyó pero no quedó ningún funcionario.");
+      return registros;
     }
 
     // ---- Adaptador: XML de la Lista Consolidada de Sanciones de la UE ----
