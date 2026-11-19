@@ -885,8 +885,12 @@
       // no-SDN). Filtra internamente las filas de SDN para no duplicar
       // tbl_OFAC_SDN.
       CSL: parseCSL,
-      // Servidores públicos sancionados vigentes (SFP/SABG, federal, ~474).
+      // Servidores públicos sancionados vigentes (SFP/SABG, federal, ~435).
       SFP: parseSFPSancionados,
+      // Lista Consolidada de Sanciones Autónomas de Canadá (Global Affairs
+      // Canada, SEMA, ~5,781 inscripciones: personas, entidades y buques).
+      // Dominio público bajo Open Government Licence; se espeja en data/.
+      CA_SEMA: parseCanadaSEMA,
       // OpenSanctions: todas usan el MISMO adaptador genérico de su CSV
       // "simple" (mismos 16 encabezados). Agregar otro dataset suyo = una
       // llave más aquí + su fila en CAT_Listas; no requiere código nuevo.
@@ -3936,6 +3940,100 @@
       };
 
       return individuos.map(mapIndividuo).concat(entidades.map(mapEntidad));
+    }
+
+    // ---- Adaptador: XML de la Lista Consolidada de Sanciones Autónomas de Canadá ----
+    // Fuente oficial: Global Affairs Canada (SEMA / Loi sur les mesures
+    // économiques spéciales).
+    // https://www.international.gc.ca/world-monde/assets/office_docs/international_relations-relations_internationales/sanctions/sema-lmes.xml
+    //
+    // OJO: esta lista NO la publica OSFI. OSFI solo recibe los reportes
+    // mensuales OSFI-525/590 de las instituciones financieras y remite a
+    // Global Affairs; buscarla en osfi-bsif.gc.ca no lleva a ningún archivo.
+    //
+    // Raíz <data-set> con un <record> por INSCRIPCIÓN (no por sujeto): un
+    // mismo nombre puede aparecer en varios <record> si está inscrito bajo
+    // más de un reglamento. Las etiquetas son BILINGÜES ("Country-Pays").
+    // No hay identificador único en el origen —(país, anexo, artículo) se
+    // repite— así que el registro_id se arma con el índice del archivo.
+    function parseCanadaSEMA(xmlText) {
+      const doc = new DOMParser().parseFromString(xmlText, "application/xml");
+      if (doc.getElementsByTagName("parsererror").length > 0) {
+        throw new Error("El XML de Canadá (SEMA) no se pudo interpretar (formato inesperado).");
+      }
+      const records = Array.from(doc.getElementsByTagName("record"));
+      if (!records.length) {
+        throw new Error("No se encontraron <record> en el XML de Canadá. ¿Cambió el esquema?");
+      }
+
+      const T = {
+        pais: "Country-Pays",
+        apellido: "LastName-NomDeFamille",
+        nombre: "GivenName-Prenom",
+        alias: "Aliases-Alias",
+        nacimiento: "DateOfBirthOrShipBuildDate-DateDeNaissanceOuDateDeConstructionDuNavire",
+        entidad: "EntityOrShip-EntiteOuNavire",
+        titulo: "TitleOrShipType-TitreOuTypeDeNavire",
+        imo: "ShipIMONumber-NumeroOMIDuNavire",
+        anexo: "Schedule-Annexe",
+        item: "Item-NumeroDarticle",
+        inscrito: "DateOfListing-DateDinscription",
+      };
+      const t = (el, tag) => {
+        const n = el.getElementsByTagName(tag)[0];
+        return n ? n.textContent.trim() : "";
+      };
+      // "Belarus / Bélarus" -> "Belarus". Este campo es el RÉGIMEN de
+      // sanciones, no la nacionalidad del sujeto, así que va a
+      // programa_motivo y nacionalidad se deja vacía a propósito.
+      const soloIngles = (s) => {
+        const partes = String(s || "").split(" / ");
+        return (partes[0] || "").trim();
+      };
+      // El tipo de buque también viene bilingüe, pero separado por " | ":
+      // "General Cargo/Multi Purpose | Cargo classique/navire polyvalent".
+      const antesDePipe = (s) => String(s || "").split(" | ")[0].trim();
+
+      const registros = records.map((el, i) => {
+        const entidad = t(el, T.entidad);
+        const esEntidad = !!entidad;
+        // Hay ~141 personas que solo traen nombre de pila (p. ej. birmanos
+        // como "Than Shwe"), así que no se puede exigir apellido.
+        const nombre = esEntidad
+          ? entidad
+          : [t(el, T.nombre), t(el, T.apellido)].filter(Boolean).join(" ").trim();
+
+        const anexo = t(el, T.anexo);
+        const item = t(el, T.item);
+        const imo = t(el, T.imo);
+        const titulo = antesDePipe(t(el, T.titulo));
+        const construido = esEntidad ? t(el, T.nacimiento) : "";
+
+        return {
+          registro_id: "CA_SEMA-" + String(i + 1).padStart(5, "0"),
+          lista_origen: "CA_SEMA",
+          tipo_sujeto: esEntidad ? "Entidad" : "Persona",
+          nombre_principal: nombre || "(sin nombre)",
+          alias: t(el, T.alias),
+          nacionalidad: "",
+          fecha_nacimiento: esEntidad ? "" : t(el, T.nacimiento),
+          id_original: [anexo, item].filter(Boolean).join(" / "),
+          programa_motivo: soloIngles(t(el, T.pais)),
+          fecha_fuente: t(el, T.inscrito),
+          notas: [
+            titulo ? (esEntidad ? "Tipo: " : "Título: ") + titulo : "",
+            imo ? "IMO: " + imo : "",
+            construido ? "Construido: " + construido : "",
+            anexo ? "Anexo: " + anexo : "",
+          ].filter(Boolean).join(" | "),
+        };
+      });
+
+      const conNombre = registros.filter((r) => r.nombre_principal !== "(sin nombre)");
+      if (!conNombre.length) {
+        throw new Error("El XML de Canadá se leyó pero ningún <record> trajo nombre ni entidad.");
+      }
+      return conNombre;
     }
 
     // ---- Adaptador: XML de la Lista Consolidada de Sanciones de la UE ----

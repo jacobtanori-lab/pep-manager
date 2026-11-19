@@ -35,6 +35,12 @@
     "url": "https://data.trade.gov/downloadable_consolidated_screening_list/v1/consolidated.csv"
   },
   {
+    "lista_id": "CA_SEMA",
+    "file": "CA_SEMA.xml",
+    "url": "https://www.international.gc.ca/world-monde/assets/office_docs/international_relations-relations_internationales/sanctions/sema-lmes.xml",
+    "nota": "Lista Consolidada de Sanciones Autonomas de Canada (Global Affairs Canada, SEMA). NO la publica OSFI: OSFI solo recibe los reportes OSFI-525/590 de los bancos y remite aqui. Un <record> por INSCRIPCION, no por sujeto. El .csv del mismo directorio da 404: solo existe el XML. ~2.9 MB que comprimen a ~198 KB."
+  },
+  {
     "lista_id": "SFP",
     "file": "SFP.csv",
     "url": "https://www.datos.gob.mx/datastore/dump/d5da6695-1a3b-4a86-93e2-4297e9463370?fields=expediente,fecha_resolucion,apellido_paterno,apellido_materno,nombre,autoridad,dependencia,sancion_impuesta,causa,inicio,fin,ley",
