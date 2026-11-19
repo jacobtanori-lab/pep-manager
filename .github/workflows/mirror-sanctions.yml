@@ -12,6 +12,21 @@ concurrency:
   group: mirror-sanctions
   cancel-in-progress: false
 
+# MAX_DIAS_SIN_EXITO: tolerancia a que una fuente siga fallando antes de poner
+# el job en ROJO. Una caida pasajera solo avisa; una fuente muerta termina
+# fallando y GitHub manda correo. Esto existe porque SFP estuvo congelado de
+# jul a nov-2026 sin que nadie se enterara: el paso conservaba la copia previa
+# y el job terminaba en verde.
+#
+# ESTADO solo registra FALLAS (nunca exitos): asi el archivo queda vacio
+# mientras todo va bien y no se generan commits diarios espurios, que es lo
+# mismo que busca el `gzip -n`. La recencia de los datos ya la da el historial
+# de git de cada data/<id>.<fmt>.gz.
+env:
+  MAX_DIAS_SIN_EXITO: "7"
+  UA_POR_DEFECTO: "pep-manager-mirror/1.0"
+  ESTADO: "data/_mirror_fallas.json"
+
 jobs:
   mirror:
     runs-on: ubuntu-latest
@@ -23,26 +38,84 @@ jobs:
         run: |
           set -uo pipefail
           mkdir -p data
+          [ -f "$ESTADO" ] || echo '{}' > "$ESTADO"
+          TMP_ESTADO="$(mktemp)"
+          HOY=$(date -u +%F)
+          AHORA=$(date -u +%s)
+
+          # exito -> borra el marcador de falla (si lo habia)
+          marcar_ok() {
+            jq --arg id "$1" 'del(.[$id])' "$ESTADO" > "$TMP_ESTADO" && mv "$TMP_ESTADO" "$ESTADO"
+          }
+          # falla -> fija fallando_desde la PRIMERA vez y lo conserva despues
+          marcar_falla() {
+            jq --arg id "$1" --arg f "$HOY" --argjson ts "$AHORA" --arg m "$2" \
+               '.[$id] = ((.[$id] // {})
+                          | .fallando_desde    = (.fallando_desde    // $f)
+                          | .fallando_desde_ts = (.fallando_desde_ts // $ts)
+                          | .ultimo_error      = $m)' \
+               "$ESTADO" > "$TMP_ESTADO" && mv "$TMP_ESTADO" "$ESTADO"
+          }
+
           count=$(jq 'length' sanctions-sources.json)
           for i in $(seq 0 $((count - 1))); do
             id=$(jq -r ".[$i].lista_id" sanctions-sources.json)
             file=$(jq -r ".[$i].file" sanctions-sources.json)
             url=$(jq -r ".[$i].url" sanctions-sources.json)
+            ua=$(jq -r ".[$i].ua // empty" sanctions-sources.json)
+            [ -n "$ua" ] || ua="$UA_POR_DEFECTO"
+            pagina=$(jq -r ".[$i].url_pagina // empty" sanctions-sources.json)
+            patron=$(jq -r ".[$i].url_patron // empty" sanctions-sources.json)
             case "$url" in
               PENDIENTE*|null|"") echo "Saltando $id: url no configurada"; continue ;;
             esac
+
+            # Espejos MANUALES: la fuente bloquea al runner (p. ej. SFP, que
+            # responde 403 a curl pero si entrega el archivo a un navegador).
+            # Se saltan aqui para no ensuciar el log con fallas de todos los
+            # dias y para que el paso de frescura no los reporte en rojo.
+            if [ "$(jq -r ".[$i].manual // false" sanctions-sources.json)" = "true" ]; then
+              echo "::notice::$id es espejo MANUAL; el Action no lo baja (ver el campo nota en sanctions-sources.json)"
+              marcar_ok "$id"
+              continue
+            fi
+
+            # Fuentes que rotan el nombre del archivo (SABG renombro
+            # servidores_sancionados_marzo.csv -> datos_abiertos_rsps_agosto.csv
+            # y asi rompio el espejo en silencio): se resuelve el enlace real
+            # desde la pagina del dataset en cada corrida. El campo url queda
+            # como respaldo si la pagina o el patron fallan.
+            if [ -n "$pagina" ] && [ -n "$patron" ]; then
+              if html=$(curl -L --fail --silent --show-error --retry 2 --max-time 60 -A "$ua" "$pagina"); then
+                resuelta=$(printf '%s' "$html" | grep -oE "$patron" | head -1)
+                if [ -n "$resuelta" ]; then
+                  [ "$resuelta" = "$url" ] || echo "::notice::$id: URL resuelta desde el dataset: $resuelta (la fijada era $url)"
+                  url="$resuelta"
+                else
+                  echo "::warning::$id: el patron no encontro enlace en $pagina; se usa la url fijada"
+                fi
+              else
+                echo "::warning::$id: no se pudo leer $pagina; se usa la url fijada"
+              fi
+            fi
+
             echo "Descargando $id -> data/$file.gz"
             if curl -L --fail --silent --show-error --retry 3 --max-time 240 \
-                 -A "pep-manager-mirror/1.0" -o "data/$file.tmp" "$url"; then
+                 -A "$ua" -o "data/$file.tmp" "$url"; then
               if [ -s "data/$file.tmp" ]; then
                 gzip -9 -nc "data/$file.tmp" > "data/$file.gz"
                 rm -f "data/$file.tmp" "data/$file"
                 echo "OK $id -> data/$file.gz ($(wc -c < "data/$file.gz") bytes)"
+                marcar_ok "$id"
               else
-                echo "::warning::$id vacío; se conserva la copia previa"; rm -f "data/$file.tmp"
+                echo "::warning::$id vacio; se conserva la copia previa"
+                rm -f "data/$file.tmp"
+                marcar_falla "$id" "respuesta vacia"
               fi
             else
-              echo "::warning::Falló $id ($url); se conserva la copia previa"; rm -f "data/$file.tmp"
+              echo "::warning::Fallo $id ($url); se conserva la copia previa"
+              rm -f "data/$file.tmp"
+              marcar_falla "$id" "curl fallo en $url"
             fi
           done
 
@@ -50,15 +123,35 @@ jobs:
         run: |
           set -uo pipefail
           mkdir -p data
+          [ -f "$ESTADO" ] || echo '{}' > "$ESTADO"
+          TMP_ESTADO="$(mktemp)"
+          HOY=$(date -u +%F)
+          AHORA=$(date -u +%s)
+          marcar_ok() {
+            jq --arg id "$1" 'del(.[$id])' "$ESTADO" > "$TMP_ESTADO" && mv "$TMP_ESTADO" "$ESTADO"
+          }
+          marcar_falla() {
+            jq --arg id "$1" --arg f "$HOY" --argjson ts "$AHORA" --arg m "$2" \
+               '.[$id] = ((.[$id] // {})
+                          | .fallando_desde    = (.fallando_desde    // $f)
+                          | .fallando_desde_ts = (.fallando_desde_ts // $ts)
+                          | .ultimo_error      = $m)' \
+               "$ESTADO" > "$TMP_ESTADO" && mv "$TMP_ESTADO" "$ESTADO"
+          }
+
           UA="pep-manager-mirror/1.0 (+https://github.com/jacobtanori-lab/pep-manager)"
           BASE="https://api.fbi.gov/wanted/v1/list"
           TMP="$(mktemp -d)"
           if ! curl -sS --fail --retry 3 --max-time 120 -A "$UA" "$BASE?page=1" -o "$TMP/p_1.json"; then
-            echo "::warning::FBI pagina 1 fallo; se conserva la copia previa"; rm -rf "$TMP"; exit 0
+            echo "::warning::FBI pagina 1 fallo; se conserva la copia previa"
+            marcar_falla FBI "pagina 1 fallo"; rm -rf "$TMP"; exit 0
           fi
           total=$(jq '.total // 0' "$TMP/p_1.json")
           per=$(jq '.items | length' "$TMP/p_1.json")
-          if [ "$per" -eq 0 ]; then echo "::warning::FBI sin items; se conserva la copia previa"; rm -rf "$TMP"; exit 0; fi
+          if [ "$per" -eq 0 ]; then
+            echo "::warning::FBI sin items; se conserva la copia previa"
+            marcar_falla FBI "sin items"; rm -rf "$TMP"; exit 0
+          fi
           pages=$(( (total + per - 1) / per ))
           echo "FBI total=$total per=$per pages=$pages"
           for p in $(seq 2 "$pages"); do
@@ -70,10 +163,12 @@ jobs:
           n=$(jq '.items | length' "$TMP/fbi.json")
           echo "FBI ensamblado: $n items"
           if [ "$n" -lt 500 ]; then
-            echo "::warning::FBI solo $n (<500); se conserva la copia previa"; rm -rf "$TMP"; exit 0
+            echo "::warning::FBI solo $n (<500); se conserva la copia previa"
+            marcar_falla FBI "solo $n items (<500)"; rm -rf "$TMP"; exit 0
           fi
           gzip -9 -nc "$TMP/fbi.json" > data/FBI.json.gz
           echo "OK FBI -> data/FBI.json.gz ($(wc -c < data/FBI.json.gz) bytes)"
+          marcar_ok FBI
           rm -rf "$TMP"
 
       - name: Commit y push si hubo cambios
@@ -87,3 +182,51 @@ jobs:
             git commit -m "chore: espejo de listas de sanciones ($(date -u +%F))"
             git push
           fi
+
+      # Va DESPUES del commit a proposito: asi los datos y el registro de fallas
+      # quedan guardados y solo entonces el job se pone en rojo. Si fuera antes,
+      # el fallo impediria el push del propio registro.
+      - name: Verificar frescura del espejo
+        run: |
+          set -uo pipefail
+          AHORA=$(date -u +%s)
+          [ -f "$ESTADO" ] || echo '{}' > "$ESTADO"
+
+          ids="$(jq -r '.[].lista_id' sanctions-sources.json) FBI"
+          duros=0
+          {
+            echo "### Frescura del espejo"
+            echo ""
+            echo "| lista | estado |"
+            echo "|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          for id in $ids; do
+            if [ "$(jq -r --arg id "$id" '.[] | select(.lista_id==$id) | .manual // false' sanctions-sources.json)" = "true" ]; then
+              echo "| $id | manual (no lo baja el Action) |" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+            desde=$(jq -r --arg id "$id" '.[$id].fallando_desde_ts // empty' "$ESTADO")
+            if [ -z "$desde" ]; then
+              echo "| $id | OK |" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+            fecha=$(jq -r --arg id "$id" '.[$id].fallando_desde // "?"' "$ESTADO")
+            err=$(jq -r --arg id "$id" '.[$id].ultimo_error // ""' "$ESTADO")
+            dias=$(( (AHORA - desde) / 86400 ))
+            if [ "$dias" -ge "$MAX_DIAS_SIN_EXITO" ]; then
+              echo "| $id | **FALLANDO $dias d** (desde $fecha) - $err |" >> "$GITHUB_STEP_SUMMARY"
+              echo "::error::$id lleva $dias dias sin actualizarse (falla desde $fecha). $err"
+              duros=$((duros + 1))
+            else
+              echo "| $id | fallando $dias d (desde $fecha) - $err |" >> "$GITHUB_STEP_SUMMARY"
+              echo "::warning::$id fallo; lleva $dias dias sin exito (tolerancia: $MAX_DIAS_SIN_EXITO d). $err"
+            fi
+          done
+
+          if [ "$duros" -gt 0 ]; then
+            echo "$duros fuente(s) rebasaron $MAX_DIAS_SIN_EXITO dias sin actualizarse."
+            echo "El espejo sigue sirviendo la copia vieja, pero la fuente necesita atencion."
+            exit 1
+          fi
+          echo "Todas las fuentes dentro de la tolerancia de $MAX_DIAS_SIN_EXITO dias."
