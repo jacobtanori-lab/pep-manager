@@ -37,6 +37,9 @@
   {
     "lista_id": "SFP",
     "file": "SFP.csv",
-    "url": "https://repodatos.atdt.gob.mx/api_update/sabg/servidores_publicos_sancionados_vigentes/servidores_sancionados_marzo.csv"
+    "url": "https://repodatos.atdt.gob.mx/api_update/sabg/servidores_publicos_sancionados_vigentes/datos_abiertos_rsps_agosto.csv",
+    "url_pagina": "https://www.datos.gob.mx/dataset/servidores_publicos_sancionados_vigentes",
+    "url_patron": "https://repodatos\\.atdt\\.gob\\.mx/[^\"']*\\.csv",
+    "nota": "SABG rota el nombre del archivo (antes servidores_sancionados_marzo.csv, luego datos_abiertos_rsps_agosto.csv). url_pagina + url_patron resuelven el enlace real del boton Descargar en cada corrida; el campo url es solo el respaldo."
   }
 ]
