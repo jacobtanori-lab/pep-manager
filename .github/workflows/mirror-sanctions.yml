@@ -265,6 +265,143 @@ jobs:
           marcar_ok CIA_WL
           rm -rf "$TMP"
 
+      # DFAT solo publica XLSX: no hay CSV, ni XML, ni API, ni dataset en
+      # data.gov.au. Se convierte aqui (openpyxl) en vez de meter SheetJS en
+      # el index.html de un solo archivo. OJO con el User-Agent: el UA normal
+      # del mirror recibe CERO bytes de dfat.gov.au, pero "Mozilla/5.0
+      # (compatible; pep-manager-mirror/1.0)" y hasta curl pelon pasan; no es
+      # antibot, es una lista negra de patrones de UA.
+      - name: DFAT Australia (XLSX -> JSON) -> data/DFAT.json.gz
+        run: |
+          set -uo pipefail
+          mkdir -p data
+          [ -f "$ESTADO" ] || echo '{}' > "$ESTADO"
+          TMP_ESTADO="$(mktemp)"
+          HOY=$(date -u +%F)
+          AHORA=$(date -u +%s)
+          marcar_ok() {
+            jq --arg id "$1" 'del(.[$id])' "$ESTADO" > "$TMP_ESTADO" && mv "$TMP_ESTADO" "$ESTADO"
+          }
+          marcar_falla() {
+            jq --arg id "$1" --arg f "$HOY" --argjson ts "$AHORA" --arg m "$2" \
+               '.[$id] = ((.[$id] // {})
+                          | .fallando_desde    = (.fallando_desde    // $f)
+                          | .fallando_desde_ts = (.fallando_desde_ts // $ts)
+                          | .ultimo_error      = $m)' \
+               "$ESTADO" > "$TMP_ESTADO" && mv "$TMP_ESTADO" "$ESTADO"
+          }
+
+          UA="Mozilla/5.0 (compatible; pep-manager-mirror/1.0)"
+          URL="https://www.dfat.gov.au/sites/default/files/Australian_Sanctions_Consolidated_List.xlsx"
+          TMP="$(mktemp -d)"
+
+          if ! curl -sS --fail --retry 3 --max-time 180 -A "$UA" "$URL" -o "$TMP/lista.xlsx"; then
+            echo "::warning::DFAT: no se pudo descargar el XLSX; se conserva la copia previa"
+            marcar_falla DFAT "descarga fallo"; rm -rf "$TMP"; exit 0
+          fi
+          if ! python3 -c "import openpyxl" 2>/dev/null; then
+            pip install --quiet --disable-pip-version-check openpyxl || {
+              echo "::warning::DFAT: no se pudo instalar openpyxl; se conserva la copia previa"
+              marcar_falla DFAT "pip install openpyxl fallo"; rm -rf "$TMP"; exit 0; }
+          fi
+
+          # Una fila por NOMBRE, no por sujeto: Name Type es Primary Name /
+          # Alias / Original Script. El sujeto es el PREFIJO NUMERICO de
+          # Reference ("2a","3a","3b" -> 2,3,3), verificado: 4,021 grupos y
+          # cada uno con exactamente un Primary Name, sin excepciones.
+          python3 - "$TMP/lista.xlsx" "$TMP/dfat.json" <<'PY' || {
+          import json, re, sys
+          from datetime import datetime, date
+          from openpyxl import load_workbook
+
+          wb = load_workbook(sys.argv[1], read_only=True, data_only=True)
+          ws = wb[wb.sheetnames[0]]
+          filas = ws.iter_rows(values_only=True)
+          next(filas)  # encabezados
+          REF, NAME, TYPE, NTYPE, ASTR, DOB, POB, CIT, ADR, AI, LI, IMO, CMT, CD, INST, TFS, TB, AE, MR = range(19)
+
+          def s(x):
+              if x is None:
+                  return ""
+              if isinstance(x, (datetime, date)):
+                  return x.strftime("%Y-%m-%d")
+              return str(x).strip()
+
+          orden, g = [], {}
+          for row in filas:
+              if row is None or len(row) < 19:
+                  continue
+              m = re.match(r"^(\d+)", s(row[REF]))
+              if not m:
+                  continue
+              k = m.group(1)
+              o = g.get(k)
+              if o is None:
+                  o = {"r": k, "n": "", "ty": "", "al": [], "os": [], "ai": [], "m": []}
+                  g[k] = o
+                  orden.append(k)
+              nom, nt = s(row[NAME]), s(row[NTYPE])
+              if nt == "Primary Name":
+                  o["n"], o["ty"] = nom, s(row[TYPE])
+              elif nt == "Original Script":
+                  if nom and nom not in o["os"]:
+                      o["os"].append(nom)
+              elif nom and nom not in o["al"]:
+                  o["al"].append(nom)
+              for idx, key in ((DOB,"dob"),(POB,"pob"),(CIT,"cit"),(ADR,"adr"),
+                               (LI,"li"),(IMO,"imo"),(CMT,"cmt"),(INST,"inst"),(CD,"cd")):
+                  val = s(row[idx])
+                  if val and not o.get(key):
+                      o[key] = val
+              ai = s(row[AI])
+              if ai and ai not in o["ai"]:
+                  o["ai"].append(ai)
+              if not o["m"]:
+                  # Las 4 columnas de medida son booleanas True/False.
+                  for idx, lbl in ((TFS,"TFS"),(TB,"Travel Ban"),(AE,"Arms Embargo"),(MR,"Maritime")):
+                      if s(row[idx]).lower() == "true":
+                          o["m"].append(lbl)
+
+          items = []
+          for k in orden:
+              o = g[k]
+              it = {"r": o["r"], "n": o["n"], "ty": o["ty"]}
+              if o["al"]:
+                  it["al"] = o["al"]
+              if o["os"]:
+                  it["os"] = o["os"]
+              for key in ("dob","pob","cit","adr","li","imo","cmt","cd","inst"):
+                  if o.get(key):
+                      it[key] = o[key]
+              if o["ai"]:
+                  it["ai"] = " || ".join(o["ai"])
+              if o["m"]:
+                  it["m"] = ", ".join(o["m"])
+              items.append(it)
+
+          with open(sys.argv[2], "w", encoding="utf-8") as fh:
+              json.dump({"items": items}, fh, ensure_ascii=False, separators=(",", ":"))
+          print("DFAT: %d sujetos" % len(items))
+          PY
+            echo "::warning::DFAT: la conversion con openpyxl fallo; se conserva la copia previa"
+            marcar_falla DFAT "conversion openpyxl fallo"; rm -rf "$TMP"; exit 0
+          }
+
+          if ! jq -e . "$TMP/dfat.json" > /dev/null 2>&1; then
+            echo "::warning::DFAT: la conversion no produjo JSON valido; se conserva la copia previa"
+            marcar_falla DFAT "JSON invalido"; rm -rf "$TMP"; exit 0
+          fi
+          sujetos=$(jq '.items | length' "$TMP/dfat.json" 2>/dev/null || echo 0)
+          echo "DFAT convertido: $sujetos sujetos"
+          if [ "$sujetos" -lt 3000 ]; then
+            echo "::warning::DFAT: solo $sujetos sujetos (<3000); se conserva la copia previa"
+            marcar_falla DFAT "solo $sujetos sujetos"; rm -rf "$TMP"; exit 0
+          fi
+          gzip -9 -nc "$TMP/dfat.json" > data/DFAT.json.gz
+          echo "OK DFAT -> data/DFAT.json.gz ($(wc -c < data/DFAT.json.gz) bytes)"
+          marcar_ok DFAT
+          rm -rf "$TMP"
+
       - name: Commit y push si hubo cambios
         run: |
           git config user.name "sanctions-mirror-bot"
@@ -288,7 +425,7 @@ jobs:
 
           # Las que se ensamblan en su propio paso no estan en el JSON de
           # fuentes, asi que se agregan a mano para que tambien se vigilen.
-          ids="$(jq -r '.[].lista_id' sanctions-sources.json) FBI CIA_WL"
+          ids="$(jq -r '.[].lista_id' sanctions-sources.json) FBI CIA_WL DFAT"
           duros=0
           {
             echo "### Frescura del espejo"

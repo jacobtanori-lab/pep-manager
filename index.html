@@ -895,6 +895,10 @@
       // (CIA World Leaders, ~5,853 cargos, semanal, dominio público).
       // NO es una lista de sanciones: un match es señal de PEP, no adversa.
       CIA_WL: parseCIAWorldLeaders,
+      // Australian Sanctions Consolidated List (DFAT, ~4,021 sujetos:
+      // personas, entidades y buques). DFAT solo publica XLSX; el Action lo
+      // convierte a JSON y agrupa las filas de alias por sujeto.
+      DFAT: parseDFAT,
       // OpenSanctions: todas usan el MISMO adaptador genérico de su CSV
       // "simple" (mismos 16 encabezados). Agregar otro dataset suyo = una
       // llave más aquí + su fila en CAT_Listas; no requiere código nuevo.
@@ -4124,6 +4128,69 @@
       });
 
       if (!registros.length) throw new Error("El JSON se leyó pero no quedó ningún funcionario.");
+      return registros;
+    }
+
+    // ---- Adaptador: Australian Sanctions Consolidated List (DFAT) ----
+    // Australian Sanctions Office / DFAT. Personas, entidades y buques bajo
+    // las leyes australianas de sanciones, incluidas las designaciones del
+    // Consejo de Seguridad de la ONU que Australia implementa.
+    //
+    // DFAT solo publica XLSX (no hay CSV, XML, API ni dataset en
+    // data.gov.au), así que el Action lo convierte a JSON con openpyxl en
+    // vez de meter SheetJS aquí. Ver el paso "DFAT Australia" del workflow.
+    //
+    // En el XLSX hay una fila por NOMBRE, no por sujeto (Name Type =
+    // Primary Name / Alias / Original Script). El sujeto es el prefijo
+    // numérico de Reference: 11,456 filas -> 4,021 sujetos, y la conversión
+    // ya viene agrupada. Formato: {items:[{r,n,ty,al?,os?,dob?,pob?,cit?,
+    // adr?,li?,imo?,cmt?,cd?,inst?,ai?,m?}]}
+    function parseDFAT(textoCrudo) {
+      let data;
+      try { data = JSON.parse(textoCrudo); }
+      catch (e) { throw new Error("El archivo de DFAT no es JSON válido."); }
+      const items = (data && data.items) ? data.items : [];
+      if (!items.length) throw new Error("El JSON no trae 'items'. ¿Se generó el espejo?");
+
+      const registros = [];
+      items.forEach((it) => {
+        const nombre = String(it.n || "").trim();
+        if (!nombre) return;
+        const tipo = String(it.ty || "").trim();
+        const esBuque = tipo === "Vessel";
+        // Las grafías en árabe/cirílico (Original Script) entran como alias:
+        // el buscador difuso las normaliza y sirven para cruzar con OFAC.
+        const alias = [].concat(it.al || [], it.os || [])
+          .map((a) => String(a).trim()).filter(Boolean).join("; ");
+
+        registros.push({
+          registro_id: "DFAT-" + String(it.r || "").padStart(5, "0"),
+          lista_origen: "DFAT",
+          tipo_sujeto: tipo === "Individual" ? "Persona" : "Entidad",
+          nombre_principal: nombre,
+          alias: alias,
+          // Citizenship sí es ciudadanía declarada por la fuente (a
+          // diferencia del Country-Pays canadiense, que es el régimen).
+          nacionalidad: String(it.cit || "").trim(),
+          fecha_nacimiento: String(it.dob || "").trim(),
+          id_original: String(it.r || "").trim(),
+          programa_motivo: String(it.cmt || "").trim(),
+          fecha_fuente: String(it.cd || "").trim(),
+          estatus: "Activo",
+          notas: [
+            esBuque ? "Buque" : "",
+            it.imo ? "IMO: " + String(it.imo).trim() : "",
+            it.m ? "Medidas: " + String(it.m).trim() : "",
+            it.pob ? "Nacido en: " + String(it.pob).trim() : "",
+            it.adr ? "Dirección: " + String(it.adr).trim() : "",
+            it.inst ? "Instrumento: " + String(it.inst).trim() : "",
+            it.li ? String(it.li).trim() : "",
+            it.ai ? String(it.ai).trim() : "",
+          ].filter(Boolean).join(" | "),
+        });
+      });
+
+      if (!registros.length) throw new Error("El JSON se leyó pero no quedó ningún sujeto con nombre.");
       return registros;
     }
 
