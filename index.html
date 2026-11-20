@@ -923,6 +923,14 @@
       // listas: es correcto, no es duplicado a corregir.
       BM: parseOpenSanctionsSimple,        // World Bank Debarred (~1,409)
       BID: parseOpenSanctionsSimple,       // BID / IADB Sanctioned (~1,130)
+      // FinCEN (Tesoro de EE. UU.), medidas especiales de las secciones 311
+      // y 9714: jurisdicciones, instituciones financieras y negocios
+      // declarados "primary money laundering concern" (~188). NO son
+      // designaciones de OFAC y no aparecen en la SDN ni en la Consolidated.
+      // Relevante para México: es el 2.º país de la lista con 18 entidades
+      // (CIBanco, Intercam y sus filiales, Vector Casa de Bolsa y 10
+      // casinos con domicilio). Mismo adaptador, no requiere código nuevo.
+      FINCEN_311: parseOpenSanctionsSimple,
     };
 
     // SINGLE SOURCE OF TRUTH: orden lógico de columnas de tbl_Personas.
