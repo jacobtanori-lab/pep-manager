@@ -1,1 +1,7 @@
-{}
+{
+  "UE": {
+    "fallando_desde": "2026-11-23",
+    "fallando_desde_ts": 1795467189,
+    "ultimo_error": "curl fallo en https://webgate.ec.europa.eu/fsd/fsf/public/files/xmlFullSanctionsList_1_1/content?token=dG9rZW4tMjAxNw"
+  }
+}
