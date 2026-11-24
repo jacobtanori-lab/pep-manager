@@ -970,6 +970,29 @@
       "fecha_captura", "fecha_actualizacion",
     ];
 
+    // Dos columnas de tbl_Personas no se llaman en Excel como las nombra la
+    // app: "enitdad_federativa" trae una errata del archivo y "texto" es el
+    // nombre viejo de fuente_descripcion. Renombrarlas en Excel rompería las
+    // fórmulas que las referencian, así que se traducen aquí.
+    //
+    // Sin esta traducción el índice de columna salía undefined y el código
+    // que lo consulta se saltaba la columna EN SILENCIO: el filtro por
+    // entidad nunca encontraba nada, y al guardar se escribía "" encima de
+    // lo que ya había. El resto de los desajustes (CURP, RFC,
+    // fecha_actualización) los resuelve normalizarCol al construir el índice.
+    const ALIAS_COLUMNAS = {
+      entidad_federativa: "enitdad_federativa",
+      fuente_descripcion: "texto",
+    };
+
+    // Índice real de una columna lógica, resolviendo el alias si hace falta.
+    // No se agregan las llaves alias al propio idx porque su tamaño se usa
+    // para dimensionar la fila que se manda a Graph.
+    function idxCol(idx, col) {
+      const i = idx[col];
+      return (i !== undefined) ? i : idx[ALIAS_COLUMNAS[col]];
+    }
+
     // Plantillas genéricas (estatales/municipales/partidos): DEP-254 a DEP-262.
     const DEP_GENERICA_MIN = 254;
     const DEP_GENERICA_MAX = 262;
@@ -1526,9 +1549,12 @@
         const colsData = await colsResp.json();
         const rowsData = await rowsResp.json();
 
-        // Mapa: nombre_columna -> índice
+        // Mapa: nombre_columna -> índice. Se normaliza igual que en el resto
+        // del código: el Excel trae "CURP", "RFC" y "fecha_actualización",
+        // que sin esto no empataban con los nombres en minúscula y sin
+        // acento que usa la app (por eso CURP y RFC nunca se escribieron).
         const idx = {};
-        (colsData.value || []).forEach((c) => { idx[c.name] = c.index; });
+        (colsData.value || []).forEach((c) => { idx[normalizarCol(c.name)] = c.index; });
 
         const filas = rowsData.value || [];
 
@@ -1990,7 +2016,7 @@
       const fDep = $("fltDependencia").value;
       const incluirEliminados = $("toggleEliminados").checked;
 
-      const val = (v, col) => String(v[idx[col]] ?? "");
+      const val = (v, col) => String(v[idxCol(idx, col)] ?? "");
 
       // Primero los filtros exactos (baratos), y sobre lo que sobreviva se
       // calcula la similitud, que es lo caro.
@@ -2041,7 +2067,7 @@
 
         COLS_VISIBLES.forEach((nombreCol) => {
           const td = document.createElement("td");
-          const i = idx[nombreCol];
+          const i = idxCol(idx, nombreCol);
           let valor = (i !== undefined && valores[i] !== null && valores[i] !== "")
             ? valores[i] : null;
 
@@ -2324,7 +2350,7 @@
       const body = $("modalVerBody");
       body.innerHTML = "";
       COLUMNAS_PERSONAS.forEach((col) => {
-        const i = idx[col];
+        const i = idxCol(idx, col);
         if (i === undefined) return;
         let val = valores[i];
         if (val === null || val === undefined || val === "") {
@@ -2603,6 +2629,11 @@
       const v = fila.values[0];
       const persona = {};
       Object.keys(idx).forEach((col) => { persona[col] = v[idx[col]]; });
+      // El objeto queda con los nombres REALES del Excel; el formulario y
+      // construirValores usan los lógicos, así que se duplican bajo su alias.
+      Object.keys(ALIAS_COLUMNAS).forEach((logico) => {
+        persona[logico] = persona[ALIAS_COLUMNAS[logico]];
+      });
 
       estadoApp.personaEditando = { index: fila.index, persona };
       resetForm();
@@ -2924,9 +2955,9 @@
           ":/workbook/worksheets/" + encodeURIComponent(hoja);
 
         const llamadas = COLS_FECHA_ALL
-          .filter((col) => idx[col] !== undefined && persona[col])
+          .filter((col) => idxCol(idx, col) !== undefined && persona[col])
           .map((col) => {
-            const direccion = columnaALetra(colBase + idx[col]) + filaAbs;
+            const direccion = columnaALetra(colBase + idxCol(idx, col)) + filaAbs;
             return fetch(wsBase + "/range(address='" + direccion + "')", {
               method: "PATCH",
               headers,
@@ -3045,7 +3076,7 @@
     function construirValores(persona, idx, valoresOriginales) {
       const arr = new Array(Object.keys(idx).length).fill("");
       COLUMNAS_PERSONAS.forEach((col) => {
-        const i = idx[col];
+        const i = idxCol(idx, col);
         if (i === undefined) return;
         if (COLS_CALCULADAS.includes(col)) {
           // Creación: fila nueva, no hay nada que preservar -> "" para que
