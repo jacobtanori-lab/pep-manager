@@ -2561,23 +2561,35 @@
     // por todos los mexicanos con cargo público que tienen foto son ~2,500
     // personas en 1.9 MB, y el cruce se hace en el navegador.
     //
-    // Techo medido el 25-nov-2026 contra la base real: de 4,103 claves de
-    // nombre que trae Wikidata, 356 empatan con la base y 274 de esas todavía
-    // no tienen foto (223 personas distintas de Wikidata). Es una vía de
-    // cientos, no de miles: el volumen sigue estando en el INE y los OPLEs.
+    // Techo medido el 25-nov-2026 contra la base real, no estimado: de 4,521
+    // claves de nombre que trae Wikidata, 314 filas sin foto empatan — 218 por
+    // nombre idéntico y 96 por empate laxo — y corresponden a 244 personas
+    // distintas de Wikidata. Sube la cobertura de 2.9% a ~3.4%.
+    //
+    // Es una vía de CIENTOS, no de miles: el volumen sigue estando en el INE
+    // (que ya dio 1,605) y en los OPLEs estatales. No volver a estimarlo de
+    // memoria, está medido.
 
     const SPARQL_ENDPOINT = "https://query.wikidata.org/sparql";
 
-    // Va PLANA a propósito, con una fila por combinación de alias y lugar.
+    // Va PLANA a propósito, con una fila por cada variante de nombre y lugar.
     // Blazegraph truena con StackOverflowError si se le pide GROUP_CONCAT con
     // GROUP BY sobre este volumen, así que se agrupa del lado del navegador.
+    //
+    // NO exige etiqueta en español, y esa es la parte que hay que cuidar al
+    // editarla: el ítem de Claudia Sheinbaum (Q5771800) tiene 53 etiquetas y
+    // NINGUNA en español ni en inglés — solo descripción en español. Pedir
+    // `FILTER(LANG(?nombre) = "es")` dejaba fuera a la presidenta y a 26 más.
+    // Se toman etiquetas y alias en cuatro idiomas de grafía latina, donde un
+    // nombre mexicano se escribe igual, y todas sirven como clave de empate:
+    // una variante que no corresponda simplemente no va a casar con nadie.
     const CONSULTA_FOTOS_MX = [
-      "SELECT ?p ?nombre ?alias ?img ?dob ?lugar WHERE {",
+      "SELECT ?p ?nombre ?img ?dob ?lugar WHERE {",
       "  ?p wdt:P31 wd:Q5 ; wdt:P27 wd:Q96 ; wdt:P18 ?img .",
       "  { ?p wdt:P106 ?o . VALUES ?o { wd:Q82955 wd:Q212238 wd:Q193391 wd:Q1930187 } }",
       "  UNION { ?p wdt:P39 ?cq }",
-      '  ?p rdfs:label ?nombre . FILTER(LANG(?nombre) = "es")',
-      '  OPTIONAL { ?p skos:altLabel ?alias . FILTER(LANG(?alias) = "es") }',
+      "  { ?p rdfs:label ?nombre } UNION { ?p skos:altLabel ?nombre }",
+      '  FILTER(LANG(?nombre) IN ("es", "en", "pt", "it"))',
       "  OPTIONAL { ?p wdt:P569 ?dob }",
       '  OPTIONAL { ?p wdt:P19 ?lq . ?lq rdfs:label ?lugar . FILTER(LANG(?lugar) = "es") }',
       "}",
@@ -2627,20 +2639,26 @@
           } catch (_) { archivo = ""; }
           const dob = /^\d{4}-\d{2}-\d{2}/.exec(g(filas[i], "dob"));
           porQID[qid] = {
-            qid: qid, nombre: g(filas[i], "nombre"), alias: [],
+            qid: qid, nombre: "", alias: [],
             archivo: archivo, nacimiento: dob ? dob[0] : "", lugares: [],
           };
         }
-        const a = g(filas[i], "alias");
-        if (a && porQID[qid].alias.indexOf(a) === -1) porQID[qid].alias.push(a);
+        // Todas las variantes de nombre llegan en la misma columna, una por
+        // fila: la primera se usa para mostrar y TODAS como clave de empate.
+        const nm = g(filas[i], "nombre");
+        if (nm) {
+          if (!porQID[qid].nombre) porQID[qid].nombre = nm;
+          else if (porQID[qid].alias.indexOf(nm) === -1) porQID[qid].alias.push(nm);
+        }
         const l = g(filas[i], "lugar");
         if (l && porQID[qid].lugares.indexOf(l) === -1) porQID[qid].lugares.push(l);
       }
-      return Object.keys(porQID).map((k) => porQID[k]).filter((c) => c.archivo);
+      return Object.keys(porQID).map((k) => porQID[k])
+        .filter((c) => c.archivo && c.nombre);
     }
 
     // Dos índices: clave exacta y por apellidos para el empate laxo. El laxo
-    // agrega ~38% (de 198 a 274 en la medición), porque la base suele traer un
+    // agrega ~44% (96 sobre 218 en la medición), porque la base suele traer un
     // nombre de pila más que Wikidata: "Layda Elena Sansores San Román"
     // contra "Layda Sansores".
     function indexarCandidatos(cands) {
