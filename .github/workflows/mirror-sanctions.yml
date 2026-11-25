@@ -66,6 +66,18 @@ jobs:
             [ -n "$ua" ] || ua="$UA_POR_DEFECTO"
             pagina=$(jq -r ".[$i].url_pagina // empty" sanctions-sources.json)
             patron=$(jq -r ".[$i].url_patron // empty" sanctions-sources.json)
+            # Fuentes grandes y lentas traen su propio max_time (CH_SECO son
+            # 43 MB en ~190 s). Sin esto curl corta a los 240 s por defecto y
+            # el archivo llega truncado: curl si lo detecta (error 18) y el
+            # paso conserva la copia previa, pero el espejo nunca avanzaria.
+            mt=$(jq -r ".[$i].max_time // empty" sanctions-sources.json)
+            [ -n "$mt" ] || mt=240
+            # Fuentes grandes y lentas (CH_SECO: 43 MB en ~190 s) traen su
+            # propio max_time; sin esto curl corta a los 240 s por defecto y
+            # el XML llega truncado (error 18), que si se detecta pero obliga
+            # a conservar la copia previa un dia tras otro.
+            mt=$(jq -r ".[$i].max_time // empty" sanctions-sources.json)
+            [ -n "$mt" ] || mt=240
             case "$url" in
               PENDIENTE*|null|"") echo "Saltando $id: url no configurada"; continue ;;
             esac

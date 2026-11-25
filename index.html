@@ -967,6 +967,15 @@
       // personas, entidades y buques). DFAT solo publica XLSX; el Action lo
       // convierte a JSON y agrupa las filas de alias por sujeto.
       DFAT: parseDFAT,
+      // Suiza (SECO). NO es de la UE: aplica las sanciones de la ONU y, caso
+      // por caso, las de la UE, mas sus propias medidas. Su "whole-list"
+      // CONSERVA a los ya desenlistados (1,576 de 9,064), que entran
+      // marcados como "Desenlistado"; ver el comentario de parseSECO.
+      CH_SECO: parseSECO,
+      // Francia (Direccion General del Tesoro), Registro Nacional de
+      // Congelamiento de Activos: la UE y la ONU que Francia aplica MAS sus
+      // congelamientos nacionales del art. L. 562-2 (~8,380 sujetos).
+      FR_TRESOR: parseTresorGels,
       // OpenSanctions: todas usan el MISMO adaptador genérico de su CSV
       // "simple" (mismos 16 encabezados). Agregar otro dataset suyo = una
       // llave más aquí + su fila en CAT_Listas; no requiere código nuevo.
@@ -988,9 +997,12 @@
       // Bancos multilaterales de desarrollo. Por el acuerdo de
       // inhabilitación cruzada (BM/BID/AfDB/ADB/EBRD se reconocen las
       // sanciones entre sí), una misma empresa puede aparecer en ambas
-      // listas: es correcto, no es duplicado a corregir.
-      BM: parseOpenSanctionsSimple,        // World Bank Debarred (~1,409)
-      BID: parseOpenSanctionsSimple,       // BID / IADB Sanctioned (~1,130)
+      // de varias a la vez: es correcto, no es duplicado a corregir.
+      BM: parseOpenSanctionsSimple,        // World Bank Debarred (~1,425)
+      BID: parseOpenSanctionsSimple,       // BID / IADB Sanctioned (~1,236)
+      AFDB: parseOpenSanctionsSimple,      // Banco Africano de Desarrollo, inhabilitados (~1,388; el unico de los cinco con personas fisicas: 242)
+      ADB: parseOpenSanctionsSimple,       // Banco Asiatico de Desarrollo, sancionados (~1,454)
+      EBRD: parseOpenSanctionsSimple,      // BERD / EBRD, entidades inelegibles (~1,235)
       // FinCEN (Tesoro de EE. UU.), medidas especiales de las secciones 311
       // y 9714: jurisdicciones, instituciones financieras y negocios
       // declarados "primary money laundering concern" (~188). NO son
@@ -6030,6 +6042,430 @@
 
       if (registros.length === 0) {
         throw new Error("El CSV de OpenSanctions se leyó pero no se encontró ningún registro con id.");
+      }
+      return registros;
+    }
+
+    // ---- Adaptador: lista de sanciones de Suiza (SECO) ----
+    // Fuente oficial (SESAM / Secretaría de Estado de Economía), dominio
+    // público del Gobierno suizo, se espeja en data/CH_SECO.xml.gz:
+    // https://www.sesam.search.admin.ch/sesam-search-web/pages/downloadXmlGesamtliste.xhtml?lang=en&action=downloadXmlGesamtlisteAction
+    // Suiza no es de la UE: aplica las sanciones de la ONU y, caso por caso,
+    // las de la UE, bajo la Ley de Embargos. Por eso su lista NO es un
+    // subconjunto de las que ya hay.
+    //
+    // Raíz <swiss-sanctions-list date="YYYY-MM-DD" list-type="whole-list">
+    // con tres clases de hijos directos:
+    //   <place ssid>            registro de lugares al que apuntan los
+    //                           place-id de nacimiento y domicilio;
+    //   <sanctions-program>     el régimen (68), con <program-key> y
+    //                           <sanctions-set> en 4 idiomas (eng/ger/fre/ita);
+    //   <target ssid>           el SUJETO (9,064), con <sanctions-set-id>,
+    //                           un <individual|entity|object> y su historial
+    //                           en <modification>.
+    //
+    // DOS TRAMPAS DE ESTE XML, las dos verificadas contra el archivo real:
+    //
+    // 1) EL HISTORIAL REPITE LOS MISMOS TAGS. Dentro de cada <target> hay
+    //    <modification> con <added>/<removed> que contienen otros <target>,
+    //    <identity>, <justification>… Son estados PASADOS. Por eso este
+    //    adaptador recorre SOLO hijos directos (hijoDirecto/hijosDirectos) y
+    //    nunca querySelector/getElementsByTagName, que bajarían al historial
+    //    y devolverían nombres viejos y 17,731 "targets" en vez de 9,064.
+    //
+    // 2) EL "whole-list" CONSERVA A LOS YA DESENLISTADOS: 1,576 de los 9,064
+    //    traen una <modification modification-type="de-listed"> y hoy NO
+    //    están sancionados (p. ej. Dzmitry Lukashenka, baja en 2016). No se
+    //    descartan —un antecedente sigue sirviendo para debida diligencia,
+    //    igual que los "Histórico" del FBI— pero se marcan de forma que no
+    //    se puedan leer mal: estatus "Desenlistado" Y el aviso al inicio de
+    //    programa_motivo, que SÍ es una columna visible del buscador.
+    //    Referencia del conteo: OpenSanctions publica 7,038 sujetos para
+    //    esta misma fuente, o sea que ellos los filtran.
+    function parseSECO(xmlText) {
+      const doc = new DOMParser().parseFromString(xmlText, "application/xml");
+      if (doc.getElementsByTagName("parsererror").length > 0) {
+        throw new Error("El XML de SECO (Suiza) no se pudo interpretar (formato inesperado).");
+      }
+      const raiz = doc.documentElement;
+      if (!raiz || raiz.nodeName !== "swiss-sanctions-list") {
+        throw new Error("El XML de SECO no tiene la raíz <swiss-sanctions-list>. ¿Cambió el formato?");
+      }
+      const fechaLista = (raiz.getAttribute("date") || "").trim();
+
+      // SOLO hijos directos: ver la trampa (1) del comentario de arriba.
+      const hijosDirectos = (el, tag) => {
+        const out = [];
+        if (!el) return out;
+        for (let n = el.firstElementChild; n; n = n.nextElementSibling) {
+          if (n.nodeName === tag) out.push(n);
+        }
+        return out;
+      };
+      const hijoDirecto = (el, tag) => {
+        if (!el) return null;
+        for (let n = el.firstElementChild; n; n = n.nextElementSibling) {
+          if (n.nodeName === tag) return n;
+        }
+        return null;
+      };
+      const textoDirecto = (el, tag) => {
+        const h = hijoDirecto(el, tag);
+        return h ? (h.textContent || "").trim() : "";
+      };
+
+      // Registro de lugares (place-id -> "Ciudad, Región, País").
+      const lugares = {};
+      hijosDirectos(raiz, "place").forEach((p) => {
+        const ssid = p.getAttribute("ssid");
+        if (!ssid) return;
+        const partes = [textoDirecto(p, "location"), textoDirecto(p, "area"), textoDirecto(p, "country")];
+        lugares[ssid] = partes.filter(Boolean).join(", ");
+      });
+      const lugarDe = (el) => {
+        const id = el ? el.getAttribute("place-id") : "";
+        return (id && lugares[id]) ? lugares[id] : "";
+      };
+
+      // sanctions-set ssid -> nombre del régimen. Se prefiere el program-key
+      // en inglés (hay uno por idioma) para que el valor no quede en alemán.
+      const programas = {};
+      hijosDirectos(raiz, "sanctions-program").forEach((pr) => {
+        const claves = hijosDirectos(pr, "program-key");
+        let clave = "";
+        claves.forEach((k) => {
+          if (k.getAttribute("lang") === "eng") clave = (k.textContent || "").trim();
+        });
+        if (!clave && claves.length) clave = (claves[0].textContent || "").trim();
+        hijosDirectos(pr, "sanctions-set").forEach((s) => {
+          const ssid = s.getAttribute("ssid");
+          if (ssid) programas[ssid] = clave;
+        });
+      });
+
+      // Un <name> se arma con sus <name-part>: si hay whole-name se usa tal
+      // cual; si no, se concatenan las partes en el orden que marca @order
+      // (apellido primero, como OFAC: "Lukashenka Dzmitry Aliaksandravich").
+      const nombreDe = (nm) => {
+        let whole = "";
+        const partes = [];
+        hijosDirectos(nm, "name-part").forEach((np) => {
+          const v = textoDirecto(np, "value");
+          if (!v) return;
+          if (np.getAttribute("name-part-type") === "whole-name") whole = v;
+          else partes.push({ orden: parseInt(np.getAttribute("order") || "0", 10) || 0, v: v });
+        });
+        if (whole) return whole;
+        partes.sort((a, b) => a.orden - b.orden);
+        return partes.map((p) => p.v).join(" ");
+      };
+
+      // Las <spelling-variant> cuelgan de cada name-part, no del nombre
+      // completo, así que suelta darían tokens aislados ("Lukashenko"). Se
+      // agrupan por lang+script y se recompone un alias COMPLETO por
+      // transliteración: así entran las grafías en cirílico/árabe que sirven
+      // para cruzar con OFAC y la ONU, igual que el Original Script de DFAT.
+      const variantesDe = (nm) => {
+        const grupos = {};
+        hijosDirectos(nm, "name-part").forEach((np) => {
+          const orden = parseInt(np.getAttribute("order") || "0", 10) || 0;
+          hijosDirectos(np, "spelling-variant").forEach((sv) => {
+            const t = (sv.textContent || "").trim();
+            if (!t) return;
+            const k = (sv.getAttribute("lang") || "") + "|" + (sv.getAttribute("script") || "");
+            if (!grupos[k]) grupos[k] = [];
+            grupos[k].push({ orden: orden, t: t });
+          });
+        });
+        return Object.keys(grupos).map((k) =>
+          grupos[k].sort((a, b) => a.orden - b.orden).map((o) => o.t).join(" ")
+        ).filter(Boolean);
+      };
+
+      const fechaDMY = (el) => {
+        const y = (el.getAttribute("year") || "").trim();
+        const m = (el.getAttribute("month") || "").trim();
+        const d = (el.getAttribute("day") || "").trim();
+        if (!y) return "";
+        if (!m) return y;
+        const mm = m.length === 1 ? "0" + m : m;
+        if (!d) return y + "-" + mm;
+        const dd = d.length === 1 ? "0" + d : d;
+        return y + "-" + mm + "-" + dd;
+      };
+
+      const unicos = (arr) => arr.filter((v, i) => v && arr.indexOf(v) === i);
+      const registros = [];
+
+      hijosDirectos(raiz, "target").forEach((t) => {
+        const ssid = (t.getAttribute("ssid") || "").trim();
+        const setId = textoDirecto(t, "sanctions-set-id");
+        // <foreign-identifier> es la referencia de la ONU o la UE del mismo
+        // sujeto (p. ej. "IQi.013"): sirve para cruzar con tbl_ONU/tbl_UE.
+        const refExterna = textoDirecto(t, "foreign-identifier");
+
+        let cuerpo = null, tipo = "", claseObjeto = "";
+        const ind = hijoDirecto(t, "individual");
+        const ent = hijoDirecto(t, "entity");
+        const obj = hijoDirecto(t, "object");
+        if (ind) { cuerpo = ind; tipo = "Persona"; }
+        else if (ent) { cuerpo = ent; tipo = "Entidad"; }
+        else if (obj) {
+          cuerpo = obj; tipo = "Entidad";
+          claseObjeto = (obj.getAttribute("object-type") || "objeto").trim();
+        }
+        if (!cuerpo) return;
+
+        // Historial del propio sujeto (hijos directos del target, NO los
+        // <modification> que vengan anidados dentro del historial mismo).
+        let fechaBaja = "", fechaAlta = "";
+        hijosDirectos(t, "modification").forEach((m) => {
+          const clase = m.getAttribute("modification-type") || "";
+          const f = (m.getAttribute("effective-date") || m.getAttribute("publication-date") || "").trim();
+          if (clase === "de-listed" && f > fechaBaja) fechaBaja = f;
+          if (clase === "listed" && !fechaAlta) fechaAlta = f;
+        });
+
+        let principal = "";
+        const alias = [];
+        const nacionalidades = [];
+        const nacimientos = [];
+        const lugaresNac = [];
+        const direcciones = [];
+        const documentos = [];
+
+        hijosDirectos(cuerpo, "identity").forEach((idn) => {
+          hijosDirectos(idn, "name").forEach((nm) => {
+            const n = nombreDe(nm);
+            if (nm.getAttribute("name-type") === "primary-name" && !principal) principal = n;
+            else if (n) alias.push(n);
+            variantesDe(nm).forEach((v) => alias.push(v));
+          });
+          hijosDirectos(idn, "nationality").forEach((na) => {
+            const c = textoDirecto(na, "country");
+            if (c) nacionalidades.push(c);
+          });
+          hijosDirectos(idn, "day-month-year").forEach((dmy) => {
+            const f = fechaDMY(dmy);
+            if (f) nacimientos.push(f);
+          });
+          hijosDirectos(idn, "place-of-birth").forEach((pb) => {
+            const l = lugarDe(pb);
+            if (l) lugaresNac.push(l);
+          });
+          hijosDirectos(idn, "address").forEach((ad) => {
+            const detalle = [
+              textoDirecto(ad, "c-o"),
+              textoDirecto(ad, "address-details"),
+              textoDirecto(ad, "zip-code"),
+              lugarDe(ad),
+            ].filter(Boolean).join(", ");
+            if (detalle) direcciones.push(detalle);
+          });
+          hijosDirectos(idn, "identification-document").forEach((dc) => {
+            const num = textoDirecto(dc, "number");
+            if (!num) return;
+            const clase = (dc.getAttribute("document-type") || "doc").trim();
+            const emisor = textoDirecto(dc, "issuer");
+            documentos.push(clase + ": " + num + (emisor ? " (" + emisor + ")" : ""));
+          });
+        });
+        if (!principal) return;
+
+        const justificaciones = hijosDirectos(cuerpo, "justification")
+          .map((j) => (j.textContent || "").trim()).filter(Boolean);
+        const otraInfo = hijosDirectos(cuerpo, "other-information")
+          .map((o) => (o.textContent || "").trim()).filter(Boolean);
+
+        const programa = (setId && programas[setId]) ? programas[setId] : "";
+
+        registros.push({
+          registro_id: "CH_SECO-" + ssid,
+          lista_origen: "CH_SECO",
+          tipo_sujeto: tipo,
+          nombre_principal: principal,
+          alias: unicos(alias).join("; "),
+          nacionalidad: unicos(nacionalidades).join("; "),
+          fecha_nacimiento: unicos(nacimientos).join("; "),
+          id_original: refExterna || ssid,
+          // El aviso de baja va AQUÍ además de en estatus porque esta es una
+          // de las seis columnas que el buscador sí muestra.
+          programa_motivo: (fechaBaja ? "DESENLISTADO · " : "") + programa,
+          fecha_fuente: fechaLista,
+          estatus: fechaBaja ? "Desenlistado" : "Activo",
+          notas: [
+            fechaBaja ? "DESENLISTADO el " + fechaBaja + ": ya NO está sancionado por Suiza; se conserva como antecedente." : "",
+            claseObjeto === "vessel" ? "Buque" : claseObjeto,
+            fechaAlta ? "Listado el " + fechaAlta : "",
+            lugaresNac.length ? "Nacido en: " + unicos(lugaresNac).join(" / ") : "",
+            documentos.length ? "Documentos: " + unicos(documentos).join(" / ") : "",
+            direcciones.length ? "Dirección: " + unicos(direcciones).join(" / ") : "",
+            justificaciones.join(" "),
+            otraInfo.join(" "),
+          ].filter(Boolean).join(" | "),
+        });
+      });
+
+      if (!registros.length) {
+        throw new Error("El XML de SECO se leyó pero no quedó ningún sujeto con nombre.");
+      }
+      return registros;
+    }
+
+    // ---- Adaptador: Registro Nacional de Congelamiento de Activos (Francia) ----
+    // Fuente oficial de la Dirección General del Tesoro, API pública en JSON
+    // (Licence Ouverte), se espeja en data/FR_TRESOR.json.gz:
+    // https://gels-avoirs.dgtresor.gouv.fr/ApiPublic/api/v1/publication/derniere-publication-fichier-json
+    // Es el "Registre national des gels": recoge las medidas de la UE y la
+    // ONU que Francia aplica MÁS sus congelamientos nacionales propios (art.
+    // L. 562-2 del Code monétaire et financier), que no están en ninguna de
+    // las listas ya integradas.
+    //
+    // Estructura: {Publications: {DatePublication, PublicationDetail: [...]}},
+    // un elemento por sujeto con IdRegistre (ÚNICO: 8,380 de 8,380
+    // verificado), Nature y Nom, y el resto de los datos en RegistreDetail
+    // como pares {TypeChamp, Valeur:[{...}]}. La llave de cada valor cambia
+    // según el TypeChamp (PRENOM->Prenom, ALIAS->Alias, NATIONALITE->Pays…),
+    // así que se leen por nombre de campo, no por posición.
+    //
+    // OJO con el nombre: "Nom" es SOLO el apellido y los nombres de pila
+    // vienen en el TypeChamp PRENOM, así que hay que componerlos. Si se
+    // tomara Nom tal cual, el buscador compararía apellidos contra nombres
+    // completos del resto de las listas.
+    function parseTresorGels(textoCrudo) {
+      let data;
+      try { data = JSON.parse(textoCrudo); }
+      catch (e) { throw new Error("El archivo del Tesoro francés no es JSON válido."); }
+
+      const pub = (data && data.Publications) ? data.Publications : null;
+      const detalle = (pub && pub.PublicationDetail) ? pub.PublicationDetail : [];
+      if (!detalle.length) {
+        throw new Error("El JSON del Tesoro francés no trae 'Publications.PublicationDetail'. ¿Cambió el formato?");
+      }
+      // DatePublication viene con hora y zona ("2026-11-24T09:37:07+01:00");
+      // a COLUMNAS_LISTA solo le interesa el día.
+      const fechaPub = String(pub.DatePublication || "").slice(0, 10);
+
+      // Todos los valores de un TypeChamp, leyendo la llave que corresponda.
+      const campos = (reg, tipo) => {
+        const out = [];
+        (reg.RegistreDetail || []).forEach((c) => {
+          if (c && c.TypeChamp === tipo) (c.Valeur || []).forEach((v) => out.push(v || {}));
+        });
+        return out;
+      };
+      const textos = (reg, tipo, llave) =>
+        campos(reg, tipo)
+          .map((v) => String((v[llave] === undefined || v[llave] === null) ? "" : v[llave]).trim())
+          .filter(Boolean);
+
+      // El régimen es el ÚLTIMO paréntesis de nivel superior de la etiqueta
+      // legal: "(UE) 2022/332 du 25/02/2022 (UE Ukraine intégrité
+      // territoriale - R (UE) 269/2014)" -> "UE Ukraine intégrité
+      // territoriale - R (UE) 269/2014". Hay paréntesis ANIDADOS, así que
+      // buscar el último "(" da un recorte roto ("UE) 269/2014"); se cierra
+      // el conteo de paréntesis desde el final. 49 regímenes distintos.
+      const regimenDe = (etiqueta) => {
+        const s = String(etiqueta || "").trim();
+        if (s.charAt(s.length - 1) !== ")") return s;
+        let prof = 0;
+        for (let i = s.length - 1; i >= 0; i--) {
+          const ch = s.charAt(i);
+          if (ch === ")") prof++;
+          else if (ch === "(") {
+            prof--;
+            if (prof === 0) return s.slice(i + 1, s.length - 1).trim();
+          }
+        }
+        return s;
+      };
+
+      const unicos = (arr) => arr.filter((v, i) => v && arr.indexOf(v) === i);
+      const registros = [];
+
+      detalle.forEach((reg) => {
+        const id = String((reg.IdRegistre === undefined || reg.IdRegistre === null) ? "" : reg.IdRegistre).trim();
+        const apellido = String(reg.Nom || "").trim();
+        const nombres = textos(reg, "PRENOM", "Prenom");
+        // Nombres de pila primero y apellido al final, como llegan OFAC y la
+        // UE; de todos modos el matcher difuso normaliza el orden.
+        const principal = unicos(nombres.concat(apellido ? [apellido] : [])).join(" ").trim();
+        if (!principal) return;
+
+        const naturaleza = String(reg.Nature || "").trim();
+
+        const fechas = campos(reg, "DATE_DE_NAISSANCE").map((v) => {
+          const y = String(v.Annee || "").trim();
+          const m = String(v.Mois || "").trim();
+          const d = String(v.Jour || "").trim();
+          if (!y) return String(v.Commentaire || "").trim();
+          if (!m) return y;
+          const mm = m.length === 1 ? "0" + m : m;
+          if (!d) return y + "-" + mm;
+          const dd = d.length === 1 ? "0" + d : d;
+          return y + "-" + mm + "-" + dd;
+        }).filter(Boolean);
+
+        const regimenes = unicos(textos(reg, "FONDEMENT_JURIDIQUE", "FondementJuridiqueLabel").map(regimenDe));
+        const refUE = textos(reg, "REFERENCE_UE", "ReferenceUe");
+        const refONU = textos(reg, "REFERENCE_ONU", "ReferenceOnu");
+        const otraIdentidad = unicos(textos(reg, "AUTRE_IDENTITE", "NumeroCarte"));
+        const imo = unicos(textos(reg, "NUMERO_OMI", "NumeroOMI"));
+
+        const identificaciones = campos(reg, "IDENTIFICATION").map((v) => {
+          const val = String(v.Identification || "").trim();
+          const com = String(v.Commentaire || "").trim();
+          if (val && val !== "/") return com ? val + " (" + com + ")" : val;
+          return com;
+        }).filter(Boolean);
+
+        const pasaportes = campos(reg, "PASSEPORT").map((v) => {
+          const n = String(v.NumeroPasseport || "").trim();
+          const com = String(v.Commentaire || "").trim();
+          return n ? (com ? n + " (" + com + ")" : n) : "";
+        }).filter(Boolean);
+
+        const nacimientoLugar = campos(reg, "LIEU_DE_NAISSANCE").map((v) =>
+          [String(v.Lieu || "").trim(), String(v.Pays || "").trim()].filter(Boolean).join(", ")
+        ).filter(Boolean);
+
+        const direcciones = [].concat(campos(reg, "ADRESSE_PP"), campos(reg, "ADRESSE_PM")).map((v) =>
+          [String(v.Adresse || "").trim(), String(v.Pays || "").trim()].filter(Boolean).join(", ")
+        ).filter(Boolean);
+
+        registros.push({
+          registro_id: "FR_TRESOR-" + id,
+          lista_origen: "FR_TRESOR",
+          tipo_sujeto: naturaleza === "Personne physique" ? "Persona" : "Entidad",
+          nombre_principal: principal,
+          // AUTRE_IDENTITE guarda el número de otra identidad documentada,
+          // no un nombre, así que va a notas y NO a alias.
+          alias: unicos(textos(reg, "ALIAS", "Alias")).join("; "),
+          nacionalidad: unicos(textos(reg, "NATIONALITE", "Pays")).join("; "),
+          fecha_nacimiento: unicos(fechas).join("; "),
+          // La referencia de la UE o la ONU cruza con tbl_UE y tbl_ONU; si no
+          // hay ninguna (congelamiento puramente nacional) queda el IdRegistre.
+          id_original: refUE.concat(refONU)[0] || id,
+          programa_motivo: regimenes.join("; "),
+          fecha_fuente: fechaPub,
+          estatus: "Activo",
+          notas: [
+            naturaleza === "Navire" ? "Buque" : "",
+            unicos(textos(reg, "TITRE", "Titre")).join(" / "),
+            nacimientoLugar.length ? "Nacido en: " + unicos(nacimientoLugar).join(" / ") : "",
+            identificaciones.length ? "Identificación: " + unicos(identificaciones).join(" / ") : "",
+            pasaportes.length ? "Pasaporte: " + unicos(pasaportes).join(" / ") : "",
+            otraIdentidad.length ? "Otra identidad: " + otraIdentidad.join(" / ") : "",
+            imo.length ? "IMO: " + imo.join(" / ") : "",
+            direcciones.length ? "Dirección: " + unicos(direcciones).join(" / ") : "",
+            unicos(textos(reg, "SITE_INTERNET", "SiteInternet")).join(" "),
+            unicos(textos(reg, "MOTIFS", "Motifs")).join(" "),
+          ].filter(Boolean).join(" | "),
+        });
+      });
+
+      if (!registros.length) {
+        throw new Error("El JSON del Tesoro francés se leyó pero no quedó ningún sujeto con nombre.");
       }
       return registros;
     }

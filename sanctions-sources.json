@@ -41,6 +41,20 @@
     "nota": "Lista Consolidada de Sanciones Autonomas de Canada (Global Affairs Canada, SEMA). NO la publica OSFI: OSFI solo recibe los reportes OSFI-525/590 de los bancos y remite aqui. Un <record> por INSCRIPCION, no por sujeto. El .csv del mismo directorio da 404: solo existe el XML. ~2.9 MB que comprimen a ~198 KB."
   },
   {
+    "lista_id": "CH_SECO",
+    "file": "CH_SECO.xml",
+    "url": "https://www.sesam.search.admin.ch/sesam-search-web/pages/downloadXmlGesamtliste.xhtml?lang=en&action=downloadXmlGesamtlisteAction",
+    "max_time": 600,
+    "nota": "Lista de sanciones de Suiza (SECO, aplicacion SESAM). Suiza NO es de la UE: aplica las sanciones de la ONU y, caso por caso, las de la UE, mas sus propias medidas bajo la Ley de Embargos, asi que no es un subconjunto de UE/ONU. OJO DOS COSAS: (1) ES GRANDE Y LENTA: 43 MB que tardan ~190 s en bajar (comprime a ~2.9 MB), por eso lleva max_time 600 en vez de los 240 por defecto; si se deja el default, curl corta a la mitad y devuelve el error 18 (transfer closed), que el paso si detecta y por eso conserva la copia previa en vez de espejar un XML truncado. (2) El list-type es 'whole-list' y CONSERVA EL HISTORIAL: trae 9,064 sujetos, de los cuales 1,576 ya estan desenlistados (traen una <modification modification-type=de-listed>); el adaptador los conserva marcados como Desenlistado, no los descarta. Para contrastar frescura: OpenSanctions publica 7,038 sujetos VIGENTES de esta misma fuente."
+  },
+  {
+    "lista_id": "FR_TRESOR",
+    "file": "FR_TRESOR.json",
+    "url": "https://gels-avoirs.dgtresor.gouv.fr/ApiPublic/api/v1/publication/derniere-publication-fichier-json",
+    "max_time": 300,
+    "nota": "Registre national des personnes et entites faisant l'objet d'une mesure de gel des avoirs (Direction Generale du Tresor, Francia). API publica oficial en JSON, ~15 MB que comprimen a ~3 MB y tardan ~25 s. Recoge las medidas de la UE y la ONU que Francia aplica MAS sus congelamientos nacionales propios (art. L. 562-2 del Code monetaire et financier), que no estan en ninguna otra lista integrada. 8,380 sujetos con IdRegistre unico: 5,508 personas fisicas, 2,833 personas morales, 39 buques. El campo Nom es SOLO el apellido; los nombres de pila van en el TypeChamp PRENOM."
+  },
+  {
     "lista_id": "SFP",
     "file": "SFP.csv",
     "url": "https://www.datos.gob.mx/datastore/dump/d5da6695-1a3b-4a86-93e2-4297e9463370?fields=expediente,fecha_resolucion,apellido_paterno,apellido_materno,nombre,autoridad,dependencia,sancion_impuesta,causa,inicio,fin,ley",
