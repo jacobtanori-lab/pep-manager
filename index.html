@@ -2048,10 +2048,17 @@
     // recién nombrados suelen venir esqueléticos — el de Amador Zamora no
     // tiene P27 ni P39 — así que exigir una propiedad fija mata el recall.
     // Lo que importa es que haya al menos UNA señal más que el nombre.
+    //
+    // Un CONFLICTO no es una señal que falta: es evidencia de que es OTRA
+    // persona, y pesa más que cualquier cantidad de señales débiles. "Es
+    // mexicano" y "tiene cargo público" son ciertas de miles de personas;
+    // una fecha de nacimiento distinta no se arregla con las dos juntas.
+    // Por eso los conflictos vetan la publicación y las notas solo avisan.
     function evaluarCandidato(entidad, persona, etiquetas) {
       if (!entidad || !entidad.id) return null;
       const senales = [];
       const notas = [];
+      const conflictos = [];
       const nombreQID = (q) => etiquetas[q] || q;
 
       // Nacionalidad. Si P27 falta, la descripción suele decirlo
@@ -2062,7 +2069,11 @@
       if (paises.indexOf(QID_MEXICO) !== -1) {
         senales.push({ que: "Nacionalidad", valor: "mexicana" });
       } else if (paises.length > 0) {
-        notas.push("Wikidata le da otra nacionalidad: " + paises.map(nombreQID).join(", ") + ".");
+        // El error real del primer barrido: un español y un chileno con el
+        // mismo nombre que funcionarios mexicanos. Si Wikidata ya dijo de
+        // dónde es y no incluye México, no es quien buscamos.
+        conflictos.push("Wikidata le da otra nacionalidad: " +
+          paises.map(nombreQID).join(", ") + ", sin México.");
       } else if (/mexican/.test(normalizarCol(descripcion))) {
         senales.push({ que: "Nacionalidad", valor: "mexicana (por la descripción)" });
       }
@@ -2077,7 +2088,7 @@
           if (m[1] === persona.fechaNacimiento) {
             senales.push({ que: "Fecha de nacimiento", valor: m[1] });
           } else {
-            notas.push("La fecha de nacimiento NO coincide: Wikidata dice " + m[1] +
+            conflictos.push("La fecha de nacimiento NO coincide: Wikidata dice " + m[1] +
               " y la base " + persona.fechaNacimiento + ".");
           }
         }
@@ -2112,6 +2123,7 @@
         archivo: (typeof archivo === "string" && archivo) ? archivo : null,
         senales: senales,
         notas: notas,
+        conflictos: conflictos,
         autor: "", licencia: "", pagina: "", thumb: "",
       };
     }
@@ -2146,6 +2158,11 @@
 
     // Por qué un candidato no se puede publicar. "" significa que sí.
     function motivoNoPublicable(cand) {
+      // Los conflictos van primero: son la razón más fuerte para no publicar,
+      // y se dicen aunque además falte la imagen.
+      if ((cand.conflictos || []).length > 0) {
+        return "Hay evidencia de que es otra persona. " + cand.conflictos.join(" ");
+      }
       if (!cand.archivo) return "El ítem no tiene imagen (P18) en Wikidata.";
       if (cand.senales.length === 0) {
         return "Solo coincide el nombre. Hace falta otra señal — cargo, fecha de " +
@@ -2357,6 +2374,14 @@
         }
         info.appendChild(chips);
 
+        // Conflictos en rojo y arriba: vetan la publicación. Las notas en
+        // ámbar solo informan.
+        (cand.conflictos || []).forEach((c) => {
+          const p = document.createElement("p");
+          p.className = "text-xs text-red-700 font-medium mt-1";
+          p.textContent = c;
+          info.appendChild(p);
+        });
         cand.notas.forEach((n) => {
           const p = document.createElement("p");
           p.className = "text-xs text-amber-700 mt-1";
