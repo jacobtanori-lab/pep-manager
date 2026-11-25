@@ -144,6 +144,10 @@
           class="text-sm font-medium px-4 py-2 rounded-lg transition">
           Listas internacionales
         </button>
+        <button type="button" id="tabFotos"
+          class="text-sm font-medium px-4 py-2 rounded-lg transition">
+          📷 Fotos
+        </button>
         <div class="flex-1"></div>
         <button type="button" id="tabBitacora"
           class="text-sm font-medium px-4 py-2 rounded-lg transition">
@@ -687,6 +691,52 @@
         </div>
       </div><!-- /seccionListas -->
 
+      <!-- ===================== SECCIÓN FOTOS EN BULK ===================== -->
+      <div id="seccionFotos" class="hidden">
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div class="px-5 py-4 border-b border-slate-200">
+            <h2 class="text-lg font-semibold text-slate-900">Fotos en bulk</h2>
+            <p class="text-xs text-slate-500">
+              Una sola consulta a Wikidata trae a todos los mexicanos con cargo público que
+              tienen foto, y el cruce contra la base se hace aquí. No es una llamada por
+              persona.
+            </p>
+          </div>
+
+          <div class="px-5 py-4 border-b border-slate-200 flex items-center gap-3 flex-wrap">
+            <button id="btnBuscarFotosBulk" type="button"
+              class="text-sm font-medium px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition shadow-sm disabled:opacity-50">
+              Buscar candidatos
+            </button>
+            <p id="bulkStatus" class="text-xs text-slate-500"></p>
+          </div>
+
+          <div id="bulkBarra"
+            class="hidden px-5 py-3 border-b border-slate-200 bg-slate-50 flex items-center gap-2 flex-wrap sticky top-0 z-10">
+            <button id="bulkTodas" type="button"
+              class="text-xs font-medium px-2.5 py-1.5 rounded-lg border border-slate-300 hover:bg-white transition">
+              Marcar todas las publicables
+            </button>
+            <button id="bulkNinguna" type="button"
+              class="text-xs font-medium px-2.5 py-1.5 rounded-lg border border-slate-300 hover:bg-white transition">
+              Ninguna
+            </button>
+            <span id="bulkConteo" class="text-xs text-slate-600"></span>
+            <div class="flex-1"></div>
+            <button id="bulkCancelar" type="button"
+              class="hidden text-xs font-medium px-2.5 py-1.5 rounded-lg border border-slate-300 hover:bg-white transition">
+              Detener
+            </button>
+            <button id="bulkPublicar" type="button"
+              class="text-sm font-medium px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition shadow-sm disabled:opacity-50">
+              Publicar seleccionadas
+            </button>
+          </div>
+
+          <div id="bulkResultados" class="p-5 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3"></div>
+        </div>
+      </div><!-- /seccionFotos -->
+
       <!-- ===================== SECCIÓN BITÁCORA ===================== -->
       <div id="seccionBitacora" class="hidden">
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
@@ -1208,6 +1258,7 @@
     $("tabPersonas").addEventListener("click", () => mostrarSeccion("personas"));
     $("tabCatalogos").addEventListener("click", () => mostrarSeccion("catalogos"));
     $("tabListas").addEventListener("click", () => mostrarSeccion("listas"));
+    $("tabFotos").addEventListener("click", () => mostrarSeccion("fotos"));
     $("tabBitacora").addEventListener("click", () => mostrarSeccion("bitacora"));
 
     $("btnRecargarBitacora").addEventListener("click", () => renderBitacora());
@@ -1258,11 +1309,13 @@
       $("seccionPersonas").classList.toggle("hidden", nombre !== "personas");
       $("seccionCatalogos").classList.toggle("hidden", nombre !== "catalogos");
       $("seccionListas").classList.toggle("hidden", nombre !== "listas");
+      $("seccionFotos").classList.toggle("hidden", nombre !== "fotos");
       $("seccionBitacora").classList.toggle("hidden", nombre !== "bitacora");
 
       estilizarTab($("tabPersonas"), nombre === "personas");
       estilizarTab($("tabCatalogos"), nombre === "catalogos");
       estilizarTab($("tabListas"), nombre === "listas");
+      estilizarTab($("tabFotos"), nombre === "fotos");
       estilizarTab($("tabBitacora"), nombre === "bitacora");
 
       if (nombre === "catalogos") {
@@ -2210,7 +2263,14 @@
     // pipeline de pep-tools, deduplica por persona_id como migrar_fotos.ps1,
     // y usa If-Match para que una escritura simultánea falle en vez de
     // sobrescribir en silencio.
-    async function agregarFilaManifiesto(personaId, info) {
+    function agregarFilaManifiesto(personaId, info) {
+      return escribirFilasManifiesto([{ personaId: personaId, info: info }]);
+    }
+
+    // Varias filas de un golpe. En bulk esto importa: 270 fotos son 270
+    // subidas pero UNA sola reescritura del manifiesto, no 270.
+    async function escribirFilasManifiesto(entradas) {
+      if (entradas.length === 0) return;
       const rutaMeta = GRAPH_BASE + "/me/drive/root:" + FOTOS_MANIFIESTO + ":";
       const rutaContenido = rutaMeta + "/content";
 
@@ -2234,19 +2294,24 @@
       const iId = pos("persona_id");
       if (iId === -1) throw new Error("El manifiesto no tiene columna persona_id.");
 
-      const nueva = filas[0].map(() => "");
-      const set = (n, v) => { const i = pos(n); if (i !== -1) nueva[i] = v || ""; };
-      set("persona_id", personaId);
-      set("autor", info.autor);
-      set("licencia", info.licencia);
-      set("fuente", info.fuente);
-      set("pagina_commons", info.pagina);
-      if (pos("pagina_commons") === -1) set("pagina_wikipedia", info.pagina);
+      const nuevas = entradas.map((e) => {
+        const fila = filas[0].map(() => "");
+        const set = (n, v) => { const i = pos(n); if (i !== -1) fila[i] = v || ""; };
+        set("persona_id", e.personaId);
+        set("autor", e.info.autor);
+        set("licencia", e.info.licencia);
+        set("fuente", e.info.fuente);
+        set("pagina_commons", e.info.pagina);
+        if (pos("pagina_commons") === -1) set("pagina_wikipedia", e.info.pagina);
+        return fila;
+      });
 
+      const reemplazados = {};
+      entradas.forEach((e) => { reemplazados[e.personaId] = true; });
       const resto = filas.slice(1).filter((f) =>
-        String(f[iId] || "").trim() !== personaId &&
+        !reemplazados[String(f[iId] || "").trim()] &&
         f.some((c) => String(c === null || c === undefined ? "" : c).trim() !== ""));
-      const salida = [filas[0]].concat(resto, [nueva])
+      const salida = [filas[0]].concat(resto, nuevas)
         .map((f) => f.map(celdaCSV).join(",")).join("\r\n") + "\r\n";
 
       // eTag del ITEM, no del contenido: el GET de /content redirige a la CDN
@@ -2487,6 +2552,484 @@
         $("btnBuscarFoto").disabled = false;
       }
     });
+
+    // -------------------------------------------------------------
+    // Fotos en bulk: una consulta a Wikidata y el cruce aquí
+    // -------------------------------------------------------------
+    // La dirección es lo que importa. Preguntarle a Wikidata por cada una de
+    // las ~62,800 personas sin foto son ~62,800 llamadas. Preguntarle UNA VEZ
+    // por todos los mexicanos con cargo público que tienen foto son ~2,500
+    // personas en 1.9 MB, y el cruce se hace en el navegador.
+    //
+    // Techo medido el 25-nov-2026 contra la base real: de 4,103 claves de
+    // nombre que trae Wikidata, 356 empatan con la base y 274 de esas todavía
+    // no tienen foto (223 personas distintas de Wikidata). Es una vía de
+    // cientos, no de miles: el volumen sigue estando en el INE y los OPLEs.
+
+    const SPARQL_ENDPOINT = "https://query.wikidata.org/sparql";
+
+    // Va PLANA a propósito, con una fila por combinación de alias y lugar.
+    // Blazegraph truena con StackOverflowError si se le pide GROUP_CONCAT con
+    // GROUP BY sobre este volumen, así que se agrupa del lado del navegador.
+    const CONSULTA_FOTOS_MX = [
+      "SELECT ?p ?nombre ?alias ?img ?dob ?lugar WHERE {",
+      "  ?p wdt:P31 wd:Q5 ; wdt:P27 wd:Q96 ; wdt:P18 ?img .",
+      "  { ?p wdt:P106 ?o . VALUES ?o { wd:Q82955 wd:Q212238 wd:Q193391 wd:Q1930187 } }",
+      "  UNION { ?p wdt:P39 ?cq }",
+      '  ?p rdfs:label ?nombre . FILTER(LANG(?nombre) = "es")',
+      '  OPTIONAL { ?p skos:altLabel ?alias . FILTER(LANG(?alias) = "es") }',
+      "  OPTIONAL { ?p wdt:P569 ?dob }",
+      '  OPTIONAL { ?p wdt:P19 ?lq . ?lq rdfs:label ?lugar . FILTER(LANG(?lugar) = "es") }',
+      "}",
+    ].join("\n");
+
+    let hallazgosBulk = [];
+    let bulkCancelado = false;
+
+    // Nombre a tokens comparables. Se descartan las palabras de menos de tres
+    // letras porque "de", "la" y "y" no distinguen a nadie.
+    function tokensNombre(s) {
+      return normalizarCol(s).replace(/[^a-z0-9 ]/g, " ").split(/\s+/)
+        .filter((w) => w.length >= 3);
+    }
+
+    async function descargarCandidatosWikidata() {
+      const resp = await fetch(
+        SPARQL_ENDPOINT + "?query=" + encodeURIComponent(CONSULTA_FOTOS_MX),
+        { headers: { Accept: "text/csv" } }
+      );
+      if (!resp.ok) throw new Error("Wikidata respondió " + resp.status + " a la consulta.");
+      const texto = decodificarBuffer(await resp.arrayBuffer());
+      if (texto.slice(0, 200).indexOf("nombre") === -1) {
+        throw new Error("Wikidata no devolvió CSV. ¿Cambió el formato del endpoint?");
+      }
+      const filas = parseCSV(texto);
+      if (filas.length < 2) return [];
+
+      const col = {};
+      filas[0].forEach((h, i) => { col[normalizarCol(h)] = i; });
+      const g = (f, n) => (col[n] === undefined ? ""
+        : String(f[col[n]] === null || f[col[n]] === undefined ? "" : f[col[n]]).trim());
+
+      const porQID = {};
+      for (let i = 1; i < filas.length; i++) {
+        const qid = g(filas[i], "p").replace(/.*\//, "");
+        if (!qid) continue;
+        if (!porQID[qid]) {
+          // La URL de P18 viene como Special:FilePath/<archivo> con el nombre
+          // percent-encoded y con guiones bajos; Commons lo quiere con
+          // espacios para que empate con lo que devuelve la API.
+          let archivo = "";
+          try {
+            archivo = decodeURIComponent(
+              g(filas[i], "img").replace(/.*Special:FilePath\//, "")
+            ).replace(/_/g, " ");
+          } catch (_) { archivo = ""; }
+          const dob = /^\d{4}-\d{2}-\d{2}/.exec(g(filas[i], "dob"));
+          porQID[qid] = {
+            qid: qid, nombre: g(filas[i], "nombre"), alias: [],
+            archivo: archivo, nacimiento: dob ? dob[0] : "", lugares: [],
+          };
+        }
+        const a = g(filas[i], "alias");
+        if (a && porQID[qid].alias.indexOf(a) === -1) porQID[qid].alias.push(a);
+        const l = g(filas[i], "lugar");
+        if (l && porQID[qid].lugares.indexOf(l) === -1) porQID[qid].lugares.push(l);
+      }
+      return Object.keys(porQID).map((k) => porQID[k]).filter((c) => c.archivo);
+    }
+
+    // Dos índices: clave exacta y por apellidos para el empate laxo. El laxo
+    // agrega ~38% (de 198 a 274 en la medición), porque la base suele traer un
+    // nombre de pila más que Wikidata: "Layda Elena Sansores San Román"
+    // contra "Layda Sansores".
+    function indexarCandidatos(cands) {
+      const exacto = {};
+      const porApellidos = {};
+      cands.forEach((c) => {
+        [c.nombre].concat(c.alias).forEach((nm) => {
+          const t = tokensNombre(nm);
+          if (t.length < 2) return;
+          const clave = t.join(" ");
+          if (!exacto[clave]) exacto[clave] = c;
+          const ap = t.slice(-2).join(" ");
+          if (!porApellidos[ap]) porApellidos[ap] = [];
+          porApellidos[ap].push({ cand: c, pila: t.slice(0, -2) });
+        });
+      });
+      return { exacto: exacto, porApellidos: porApellidos };
+    }
+
+    function buscarEmpate(indice, nombreBase) {
+      const t = tokensNombre(nombreBase);
+      if (t.length < 2) return null;
+      const exacto = indice.exacto[t.join(" ")];
+      if (exacto) return { cand: exacto, tipo: "nombre idéntico" };
+      const grupo = indice.porApellidos[t.slice(-2).join(" ")] || [];
+      for (let i = 0; i < grupo.length; i++) {
+        // Apellidos iguales no bastan: tiene que coincidir también al menos un
+        // nombre de pila, o "García López" casaría con cualquier García López.
+        if (grupo[i].pila.some((w) => t.indexOf(w) !== -1)) {
+          return { cand: grupo[i].cand, tipo: "apellidos + nombre de pila" };
+        }
+      }
+      return null;
+    }
+
+    function evaluarHallazgoBulk(empate, persona) {
+      const c = empate.cand;
+      // La nacionalidad mexicana la garantiza la consulta (P27 = Q96), así que
+      // en bulk NO es una señal que distinga: la revisión humana de la rejilla
+      // es el filtro real, igual que la hoja de revisión del pipeline.
+      const senales = [{ que: "Empate", valor: empate.tipo }];
+      const conflictos = [];
+
+      if (c.nacimiento && persona.fechaNacimiento) {
+        if (c.nacimiento === persona.fechaNacimiento) {
+          senales.push({ que: "Fecha de nacimiento", valor: c.nacimiento });
+        } else {
+          conflictos.push("Fecha de nacimiento distinta: Wikidata dice " + c.nacimiento +
+            " y la base " + persona.fechaNacimiento + ".");
+        }
+      }
+      const geo = [persona.municipio, persona.entidad].filter(Boolean).join(" ");
+      if (geo && c.lugares.length > 0) {
+        const hit = c.lugares.filter((l) => coincidenPalabras(l, geo))[0];
+        if (hit) senales.push({ que: "Lugar de nacimiento", valor: hit });
+      }
+      return {
+        personaId: persona.id, nombreBase: persona.nombre, cargo: persona.cargo,
+        qid: c.qid, etiqueta: c.nombre, archivo: c.archivo,
+        senales: senales, conflictos: conflictos, notas: [],
+        autor: "", licencia: "", pagina: "", thumb: "",
+        incluir: false, error: "", publicada: false,
+      };
+    }
+
+    // Autor y licencia de todos los archivos, en lotes de 50 (el máximo que
+    // acepta titles=). Sin esto no se puede publicar nada.
+    async function atribucionCommonsEnLotes(archivos, avisar) {
+      const unicos = Object.keys(archivos.reduce((a, x) => { a[x] = true; return a; }, {}));
+      const mapa = {};
+      for (let i = 0; i < unicos.length; i += 50) {
+        if (bulkCancelado) break;
+        const lote = unicos.slice(i, i + 50);
+        if (avisar) avisar(Math.min(i + lote.length, unicos.length), unicos.length);
+        const parcial = await atribucionCommons(lote);
+        Object.keys(parcial).forEach((k) => { mapa[k] = parcial[k]; });
+      }
+      return mapa;
+    }
+
+    async function cruzarFotosBulk() {
+      const status = $("bulkStatus");
+      const decir = (t, clase) => {
+        status.textContent = t;
+        status.className = "text-xs " + (clase || "text-slate-500");
+      };
+
+      bulkCancelado = false;
+      hallazgosBulk = [];
+      $("bulkResultados").innerHTML = "";
+      $("bulkBarra").classList.add("hidden");
+
+      decir("Cargando la base y el manifiesto…");
+      await asegurarDatosPersonas();
+      await asegurarManifiestoFotos();
+
+      decir("Consultando Wikidata (una sola llamada, ~2 MB)…");
+      const cands = await descargarCandidatosWikidata();
+      if (cands.length === 0) throw new Error("Wikidata no devolvió candidatos.");
+
+      decir("Cruzando " + cands.length + " candidatos contra la base…");
+      const indice = indexarCandidatos(cands);
+      const idx = datosCargados.idx;
+      let sinFoto = 0;
+
+      datosCargados.filas.forEach((fila) => {
+        const valores = fila.values[0];
+        const dato = (c) => {
+          const i = idxCol(idx, c);
+          if (i === undefined) return "";
+          const v = valores[i];
+          return String(v === null || v === undefined ? "" : v).trim();
+        };
+        const pid = dato("persona_id");
+        if (!pid || tieneFoto(pid)) return;
+        if (dato("tipo_pep") === "Eliminado") return;
+        sinFoto++;
+        const empate = buscarEmpate(indice, dato("nombre_completo"));
+        if (!empate) return;
+        const cat = mapCargo[dato("cargo_id")];
+        hallazgosBulk.push(evaluarHallazgoBulk(empate, {
+          id: pid,
+          nombre: dato("nombre_completo"),
+          cargo: cat ? (cat.cargo || cat.nombre || "") : "",
+          entidad: dato("entidad_federativa"),
+          municipio: dato("municipio"),
+          fechaNacimiento: excelSerialToInputDate(dato("fecha_nacimiento")),
+        }));
+      });
+
+      if (hallazgosBulk.length === 0) {
+        decir("Ninguna de las " + sinFoto + " personas sin foto empata con Wikidata.",
+          "text-slate-600");
+        return;
+      }
+
+      const atrib = await atribucionCommonsEnLotes(
+        hallazgosBulk.map((h) => h.archivo),
+        (hechos, total) => decir("Consultando autor y licencia en Commons… " +
+          hechos + " de " + total + " archivos.")
+      );
+      hallazgosBulk.forEach((h) => {
+        const a = atrib[h.archivo];
+        if (a) { h.autor = a.autor; h.licencia = a.licencia; h.pagina = a.pagina; h.thumb = a.thumb; }
+        // Se marcan solas las que no tienen nada en contra. Las demás quedan
+        // desmarcadas con el motivo a la vista, igual que la hoja de revisión
+        // del pipeline: incluir por omisión, descartar con un clic.
+        h.incluir = !motivoNoPublicable(h);
+      });
+
+      // Primero lo dudoso: es donde la revisión humana rinde.
+      hallazgosBulk.sort((a, b) => {
+        const ma = motivoNoPublicable(a) ? 0 : 1;
+        const mb = motivoNoPublicable(b) ? 0 : 1;
+        if (ma !== mb) return ma - mb;
+        return b.senales.length - a.senales.length;
+      });
+
+      pintarBulk();
+      const publicables = hallazgosBulk.filter((h) => !motivoNoPublicable(h)).length;
+      decir(hallazgosBulk.length + " empates de " + sinFoto + " personas sin foto · " +
+        publicables + " publicables · " + (hallazgosBulk.length - publicables) +
+        " con algo en contra (van primero).", "text-slate-600");
+    }
+
+    function actualizarConteoBulk() {
+      const sel = hallazgosBulk.filter((h) => h.incluir && !h.publicada).length;
+      $("bulkConteo").textContent = sel + " seleccionada(s) de " + hallazgosBulk.length;
+      $("bulkPublicar").disabled = sel === 0;
+    }
+
+    function pintarBulk() {
+      const caja = $("bulkResultados");
+      caja.innerHTML = "";
+      $("bulkBarra").classList.remove("hidden");
+
+      hallazgosBulk.forEach((h) => {
+        const motivo = motivoNoPublicable(h);
+        const card = document.createElement("div");
+        card.className = "border rounded-lg p-3 flex gap-3 " +
+          (h.publicada ? "border-green-300 bg-green-50"
+            : motivo ? "border-amber-300 bg-amber-50" : "border-slate-200");
+
+        const izq = document.createElement("div");
+        izq.className = "flex flex-col items-center gap-2 shrink-0";
+
+        const chk = document.createElement("input");
+        chk.type = "checkbox";
+        chk.className = "w-4 h-4";
+        chk.checked = h.incluir;
+        chk.disabled = !!motivo || h.publicada;
+        chk.title = motivo || "Incluir en la publicación";
+        chk.addEventListener("change", () => { h.incluir = chk.checked; actualizarConteoBulk(); });
+        izq.appendChild(chk);
+
+        const mini = document.createElement(h.thumb ? "img" : "div");
+        mini.className = h.thumb
+          ? "w-16 object-cover rounded border border-slate-300 bg-slate-100"
+          : "w-16 rounded border border-slate-200 bg-slate-100";
+        mini.style.height = "5.25rem";
+        if (h.thumb) { mini.src = h.thumb; mini.alt = "Foto candidata de " + h.nombreBase; }
+        izq.appendChild(mini);
+        card.appendChild(izq);
+
+        const info = document.createElement("div");
+        info.className = "min-w-0 flex-1";
+
+        const nom = document.createElement("div");
+        nom.className = "text-sm font-medium text-slate-800 leading-snug";
+        nom.textContent = h.nombreBase;
+        info.appendChild(nom);
+
+        const meta = document.createElement("div");
+        meta.className = "text-xs text-slate-500";
+        meta.textContent = h.personaId + (h.cargo ? " · " + h.cargo : "");
+        info.appendChild(meta);
+
+        // Si Wikidata lo llama distinto, decirlo: es lo que el revisor
+        // necesita ver para juzgar un empate laxo.
+        if (normalizarCol(h.etiqueta) !== normalizarCol(h.nombreBase)) {
+          const wd = document.createElement("div");
+          wd.className = "text-xs text-slate-500";
+          wd.textContent = "Wikidata: " + h.etiqueta;
+          info.appendChild(wd);
+        }
+
+        const enlace = document.createElement("a");
+        enlace.href = "https://www.wikidata.org/wiki/" + encodeURIComponent(h.qid);
+        enlace.target = "_blank";
+        enlace.rel = "noopener noreferrer";
+        enlace.className = "text-xs text-blue-600 hover:underline";
+        enlace.textContent = h.qid;
+        info.appendChild(enlace);
+
+        const chips = document.createElement("div");
+        chips.className = "flex flex-wrap gap-1 mt-1.5";
+        h.senales.forEach((s) => {
+          const chip = document.createElement("span");
+          chip.className = "text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-800";
+          chip.textContent = s.que + ": " + s.valor;
+          chips.appendChild(chip);
+        });
+        info.appendChild(chips);
+
+        h.conflictos.forEach((c) => {
+          const p = document.createElement("p");
+          p.className = "text-xs text-red-700 font-medium mt-1";
+          p.textContent = c;
+          info.appendChild(p);
+        });
+
+        const atr = document.createElement("p");
+        atr.className = "text-xs text-slate-500 mt-1 break-words";
+        atr.textContent = (h.autor || "SIN AUTOR") + " · " + (h.licencia || "sin licencia");
+        info.appendChild(atr);
+
+        if (motivo && h.conflictos.length === 0) {
+          const p = document.createElement("p");
+          p.className = "text-xs text-amber-800 mt-1";
+          p.textContent = motivo;
+          info.appendChild(p);
+        }
+        if (h.error) {
+          const p = document.createElement("p");
+          p.className = "text-xs text-red-600 mt-1";
+          p.textContent = h.error;
+          info.appendChild(p);
+        }
+        if (h.publicada) {
+          const p = document.createElement("p");
+          p.className = "text-xs text-green-700 font-medium mt-1";
+          p.textContent = "Publicada.";
+          info.appendChild(p);
+        }
+
+        card.appendChild(info);
+        caja.appendChild(card);
+      });
+      actualizarConteoBulk();
+    }
+
+    async function publicarBulk() {
+      const status = $("bulkStatus");
+      const pendientes = hallazgosBulk.filter(
+        (h) => h.incluir && !h.publicada && !motivoNoPublicable(h)
+      );
+      if (pendientes.length === 0) return;
+
+      bulkCancelado = false;
+      $("bulkCancelar").classList.remove("hidden");
+      $("bulkPublicar").disabled = true;
+      $("btnBuscarFotosBulk").disabled = true;
+
+      // Una imagen por ARCHIVO, no por persona: varias filas de la base
+      // pueden apuntar al mismo retrato, y cada una se guarda con su propio
+      // persona_id porque así la busca la app.
+      const cacheBlob = {};
+      const entradas = [];
+      let hechas = 0, fallidas = 0;
+
+      try {
+        for (let i = 0; i < pendientes.length; i++) {
+          if (bulkCancelado) break;
+          const h = pendientes[i];
+          status.className = "text-xs text-slate-500";
+          status.textContent = "Publicando " + (i + 1) + " de " + pendientes.length +
+            "… (" + hechas + " listas, " + fallidas + " con error)";
+          try {
+            if (!cacheBlob[h.archivo]) {
+              const img = await fetch(
+                COMMONS_FILEPATH + encodeURIComponent(h.archivo) + "?width=360"
+              );
+              if (!img.ok) throw new Error("Commons no entregó la imagen (" + img.status + ").");
+              cacheBlob[h.archivo] = await img.blob();
+            }
+            const blob = cacheBlob[h.archivo];
+            const subida = await graphFetch(
+              GRAPH_BASE + "/me/drive/root:" + FOTOS_PATH + "/" +
+                encodeURIComponent(h.personaId + ".jpg") + ":/content",
+              { method: "PUT", headers: { "Content-Type": blob.type || "image/jpeg" }, body: blob }
+            );
+            if (!subida.ok) throw new Error(await mensajeErrorGraph(subida));
+            entradas.push({
+              personaId: h.personaId,
+              info: {
+                autor: h.autor, licencia: h.licencia, fuente: "",
+                pagina: h.pagina ||
+                  ("https://commons.wikimedia.org/wiki/File:" + encodeURIComponent(h.archivo)),
+              },
+            });
+            h.publicada = true;
+            h.error = "";
+            hechas++;
+          } catch (err) {
+            h.error = err.message || String(err);
+            fallidas++;
+          }
+        }
+
+        // UNA sola reescritura, con todo lo que sí subió. Va al final para que
+        // el manifiesto nunca prometa una foto que no se alcanzó a subir.
+        if (entradas.length > 0) {
+          status.textContent = "Escribiendo el manifiesto (" + entradas.length + " filas)…";
+          await escribirFilasManifiesto(entradas);
+          entradas.forEach((e) => {
+            if (fotosManifiesto) fotosManifiesto[e.personaId] = e.info;
+            delete cacheFotoURL[e.personaId];
+          });
+        }
+
+        status.className = "text-xs " + (fallidas ? "text-amber-700" : "text-green-700");
+        status.textContent = hechas + " publicada(s)" +
+          (fallidas ? ", " + fallidas + " con error (el motivo está en cada tarjeta)" : "") +
+          (bulkCancelado ? ". Detenido: lo ya subido quedó en el manifiesto." : ".");
+      } catch (err) {
+        status.className = "text-xs text-red-600";
+        status.textContent = "Error al publicar: " + (err.message || err);
+      } finally {
+        $("bulkCancelar").classList.add("hidden");
+        $("btnBuscarFotosBulk").disabled = false;
+        pintarBulk();
+      }
+    }
+
+    $("btnBuscarFotosBulk").addEventListener("click", async () => {
+      $("btnBuscarFotosBulk").disabled = true;
+      try {
+        await cruzarFotosBulk();
+      } catch (err) {
+        $("bulkStatus").className = "text-xs text-red-600";
+        $("bulkStatus").textContent = "Error: " + (err.message || err);
+      } finally {
+        $("btnBuscarFotosBulk").disabled = false;
+      }
+    });
+
+    $("bulkTodas").addEventListener("click", () => {
+      hallazgosBulk.forEach((h) => { h.incluir = !motivoNoPublicable(h) && !h.publicada; });
+      pintarBulk();
+    });
+    $("bulkNinguna").addEventListener("click", () => {
+      hallazgosBulk.forEach((h) => { h.incluir = false; });
+      pintarBulk();
+    });
+    $("bulkCancelar").addEventListener("click", () => {
+      bulkCancelado = true;
+      $("bulkStatus").textContent = "Deteniendo al terminar la foto en curso…";
+    });
+    $("bulkPublicar").addEventListener("click", publicarBulk);
 
     // Miniatura para la tabla de resultados. Solo pide la imagen si el
     // manifiesto dice que existe, para no lanzar 404 por cada fila.
@@ -3779,6 +4322,16 @@
         resp = await fetch(url, opts);
       } catch (_) {
         throw new Error("Sin conexión a OneDrive. Verifica tu conexión.");
+      }
+
+      // 429 / 503: Graph pide bajar el ritmo. Pasa al subir fotos en lote, y
+      // sin esto una ráfaga de 270 subidas se cae a la mitad. Se respeta
+      // Retry-After con un tope, para no dejar la pantalla colgada.
+      if ((resp.status === 429 || resp.status === 503) && reintentos > 0) {
+        const pedido = parseInt(resp.headers.get("Retry-After") || "", 10);
+        const espera = Math.min(isNaN(pedido) ? 5 : pedido, 30) * 1000;
+        await new Promise((r) => setTimeout(r, espera));
+        return graphFetch(url, options, reintentos - 1);
       }
 
       // 401: token expirado/invalidado -> re-login interactivo y reintento.
