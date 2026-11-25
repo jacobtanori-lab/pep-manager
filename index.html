@@ -2956,8 +2956,25 @@
       // pueden apuntar al mismo retrato, y cada una se guarda con su propio
       // persona_id porque así la busca la app.
       const cacheBlob = {};
-      const entradas = [];
+      let entradas = [];
       let hechas = 0, fallidas = 0;
+
+      // El manifiesto se vacía por tandas, no al final de las 300. Si se
+      // cierra la pestaña a media corrida, lo subido hasta la última tanda ya
+      // quedó anotado; sin esto, esas fotos existirían en OneDrive pero la app
+      // no las vería. La tanda va DESPUÉS de las subidas para que el
+      // manifiesto nunca prometa una foto que no se alcanzó a subir.
+      const TANDA = 50;
+      const vaciar = async () => {
+        if (entradas.length === 0) return;
+        status.textContent = "Escribiendo el manifiesto (" + entradas.length + " filas)…";
+        await escribirFilasManifiesto(entradas);
+        entradas.forEach((e) => {
+          if (fotosManifiesto) fotosManifiesto[e.personaId] = e.info;
+          delete cacheFotoURL[e.personaId];
+        });
+        entradas = [];
+      };
 
       try {
         for (let i = 0; i < pendientes.length; i++) {
@@ -2996,18 +3013,10 @@
             h.error = err.message || String(err);
             fallidas++;
           }
+          if (entradas.length >= TANDA) await vaciar();
         }
 
-        // UNA sola reescritura, con todo lo que sí subió. Va al final para que
-        // el manifiesto nunca prometa una foto que no se alcanzó a subir.
-        if (entradas.length > 0) {
-          status.textContent = "Escribiendo el manifiesto (" + entradas.length + " filas)…";
-          await escribirFilasManifiesto(entradas);
-          entradas.forEach((e) => {
-            if (fotosManifiesto) fotosManifiesto[e.personaId] = e.info;
-            delete cacheFotoURL[e.personaId];
-          });
-        }
+        await vaciar();
 
         status.className = "text-xs " + (fallidas ? "text-amber-700" : "text-green-700");
         status.textContent = hechas + " publicada(s)" +
