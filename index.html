@@ -478,8 +478,14 @@
                 <p id="err_tipo_pep" class="err hidden"></p>
               </div>
               <div id="wrap_relacionado" class="hidden">
-                <label class="lbl" for="f_persona_id_relacionado">persona_id_relacionado</label>
-                <select id="f_persona_id_relacionado" class="inp"></select>
+                <label class="lbl" for="f_rel_buscar">persona_id_relacionado <span class="text-red-500">*</span></label>
+                <input id="f_rel_buscar" class="inp" type="search" autocomplete="off"
+                       placeholder="Busca al PEP principal por nombre o PEP-id…" />
+                <select id="f_persona_id_relacionado" class="inp mt-2"></select>
+                <p id="err_persona_id_relacionado" class="err hidden"></p>
+                <p class="text-xs text-slate-500 mt-1">Al elegir al principal se copian su cargo,
+                  dependencia, entidad y fechas, y su nombre queda anotado en
+                  <span class="font-medium">notas</span>. Todo queda editable.</p>
               </div>
             </div>
           </div>
@@ -1241,6 +1247,10 @@
     $("f_cargo_id").addEventListener("change", onCargoChange);
     $("f_dependencia_efectiva_id").addEventListener("change", onDepChange);
     $("f_tipo_pep").addEventListener("change", onTipoPepChange);
+    $("f_persona_id_relacionado").addEventListener("change", onRelacionadoChange);
+    $("f_rel_buscar").addEventListener("input", function () {
+      poblarRelacionados($("f_persona_id_relacionado").value, $("f_rel_buscar").value);
+    });
 
     // CURP/RFC a mayúsculas al salir del campo.
     $("f_curp").addEventListener("blur", (e) => { e.target.value = e.target.value.toUpperCase().trim(); });
@@ -3520,6 +3530,12 @@
         } else if (col.indexOf("fecha") !== -1 && !isNaN(val)) {
           // Las columnas de fecha llegan como serial de Excel.
           val = formatExcelDate(val);
+        } else if (col === "persona_id_relacionado") {
+          // El id solo no dice nada: se resuelve al nombre de la persona.
+          const relFila = buscarFilaPorId(String(val));
+          const iNomRel = idxCol(idx, "nombre_completo");
+          const nomRel = (relFila && iNomRel !== undefined) ? relFila.values[0][iNomRel] : "";
+          if (nomRel) val = val + " — " + nomRel;
         }
         const campo = document.createElement("div");
         const lbl = document.createElement("div");
@@ -3831,6 +3847,8 @@
       $("wrap_entidad").classList.add("hidden");
       $("wrap_municipio").classList.add("hidden");
       $("wrap_relacionado").classList.add("hidden");
+      $("f_rel_buscar").value = "";
+      poblarRelacionados("", "");
       const selDep = $("f_dependencia_efectiva_id");
       selDep.innerHTML = '<option value="">— Selecciona una dependencia —</option>';
       selDep.disabled = false;
@@ -3863,22 +3881,66 @@
       if (seleccion) sel.value = seleccion;
     }
 
-    function poblarRelacionados(seleccion) {
+    // Los principales son 64 mil personas: volcarlas todas como <option>
+    // congelaba el modal. Se arma sólo lo que coincide con el buscador, con un
+    // tope, y el valor ya guardado siempre entra aunque no coincida con el
+    // filtro (si no, al editar se perdería).
+    const REL_MAX_OPCIONES = 50;
+
+    function nuevaOpcionRel(valor, texto, deshabilitada) {
+      const opt = document.createElement("option");
+      opt.value = valor;
+      opt.textContent = texto;
+      if (deshabilitada) opt.disabled = true;
+      return opt;
+    }
+
+    function poblarRelacionados(seleccion, filtro) {
       const sel = $("f_persona_id_relacionado");
       const idx = datosCargados.idx;
-      sel.innerHTML = '<option value="">— Ninguna —</option>';
-      datosCargados.filas.forEach((fila) => {
-        const v = fila.values[0];
-        const pid = v[idx["persona_id"]];
-        if (!pid) return;
+      const propio = estadoApp.personaEditando ? estadoApp.personaEditando.persona.persona_id : null;
+      const q = normTexto(filtro || "");
+      const iId = idxCol(idx, "persona_id");
+      const iNom = idxCol(idx, "nombre_completo");
+      const iTipo = idxCol(idx, "tipo_pep");
+      const frag = document.createDocumentFragment();
+      frag.appendChild(nuevaOpcionRel("", "— Ninguna —"));
+
+      let mostradas = 0, coincidencias = 0, haySeleccion = false;
+      for (let k = 0; k < datosCargados.filas.length; k++) {
+        const v = datosCargados.filas[k].values[0];
+        const pid = v[iId];
+        if (!pid) continue;
         // No permitir relacionarse consigo misma.
-        if (estadoApp.personaEditando && estadoApp.personaEditando.persona.persona_id === pid) return;
-        const opt = document.createElement("option");
-        opt.value = pid;
-        opt.textContent = pid + " — " + (v[idx["nombre_completo"]] || "");
-        sel.appendChild(opt);
-      });
-      if (seleccion) sel.value = seleccion;
+        if (propio && propio === pid) continue;
+        const esSeleccion = !!seleccion && pid === seleccion;
+        // Un familiar o asociado cuelga de un principal, no de otro familiar.
+        if (!esSeleccion && v[iTipo] !== "Principal") continue;
+        const nombre = v[iNom] || "";
+        if (q && !esSeleccion && normTexto(pid + " " + nombre).indexOf(q) === -1) continue;
+        coincidencias++;
+        if (esSeleccion) haySeleccion = true;
+        if (mostradas >= REL_MAX_OPCIONES && !esSeleccion) continue;
+        mostradas++;
+        frag.appendChild(nuevaOpcionRel(pid, pid + " — " + nombre));
+      }
+      if (coincidencias > mostradas) {
+        frag.appendChild(nuevaOpcionRel("", "… " + (coincidencias - mostradas) + " más: afina la búsqueda", true));
+      }
+      sel.innerHTML = "";
+      sel.appendChild(frag);
+      sel.value = haySeleccion ? seleccion : "";
+    }
+
+    // Devuelve la fila cargada de un persona_id, o null.
+    function buscarFilaPorId(pid) {
+      const idx = datosCargados.idx;
+      const i = idxCol(idx, "persona_id");
+      if (i === undefined || !pid) return null;
+      for (let k = 0; k < datosCargados.filas.length; k++) {
+        if (datosCargados.filas[k].values[0][i] === pid) return datosCargados.filas[k];
+      }
+      return null;
     }
 
     function llenarFormDesdePersona(p) {
@@ -3905,8 +3967,13 @@
       $("f_estatus").value = p.estatus || "";
 
       $("f_tipo_pep").value = p.tipo_pep || "Principal";
+      // El valor guardado se pasa al poblar: la lista va filtrada y topada, así
+      // que la opción no existiría si se asignara después. Se puebla también
+      // para los Principal (aunque el campo quede oculto) porque ahí viven los
+      // pares propietario/suplente y al guardar se vuelve a leer del select.
+      $("f_rel_buscar").value = "";
+      poblarRelacionados(p.persona_id_relacionado || "", "");
       onTipoPepChange();
-      if (p.persona_id_relacionado) $("f_persona_id_relacionado").value = p.persona_id_relacionado;
 
       $("f_fuente_descripcion").value = p.fuente_descripcion || "";
       $("f_fuente_url").value = p.fuenteurl || "";
@@ -3995,7 +4062,46 @@
       const t = $("f_tipo_pep").value;
       const mostrar = (t === "Familiar" || t === "Asociado");
       $("wrap_relacionado").classList.toggle("hidden", !mostrar);
-      if (mostrar) poblarRelacionados($("f_persona_id_relacionado").value);
+      if (mostrar) poblarRelacionados($("f_persona_id_relacionado").value, $("f_rel_buscar").value);
+      else $("f_rel_buscar").value = "";
+    }
+
+    // El principal manda: un familiar o asociado está expuesto por el cargo de
+    // esa persona. Al elegirla se copian su cargo, dependencia, entidad,
+    // municipio y fechas — así "estatus" y "fecha_fin_remanencia", que Excel
+    // calcula a partir de las fechas, salen iguales a las del principal — y su
+    // nombre queda anotado en notas. Es prellenado, no candado: todo editable.
+    function onRelacionadoChange() {
+      const pid = $("f_persona_id_relacionado").value;
+      if (!pid) return;
+      const fila = buscarFilaPorId(pid);
+      if (!fila) return;
+      const idx = datosCargados.idx;
+      const v = fila.values[0];
+      const leer = function (col) {
+        const i = idxCol(idx, col);
+        if (i === undefined || v[i] === null || v[i] === undefined) return "";
+        return v[i];
+      };
+      const dep = String(leer("dependencia_efectiva_id") || "");
+
+      $("f_cargo_id").value = leer("cargo_id");
+      onCargoChange(dep || null);
+      poblarEntidades(leer("entidad_federativa") || "");
+      actualizarVisibilidadEntidadMunicipio(dep);
+      $("f_municipio").value = leer("municipio");
+      $("f_fecha_inicio_cargo").value = excelSerialToInputDate(leer("fecha_inicio_cargo"));
+      $("f_fecha_fin_proyectada").value = excelSerialToInputDate(leer("fecha_fin_proyectada"));
+
+      const etiqueta = ($("f_tipo_pep").value === "Asociado" ? "Asociado de " : "Familiar de ") +
+        (leer("nombre_completo") || pid) + " (" + pid + ")";
+      const notas = $("f_notas").value.trim();
+      const reAnotacion = /^(?:Familiar|Asociado) de .*?\(PEP-\d+\)/;
+      // No duplicar la anotación si ya estaba puesta: se reemplaza.
+      $("f_notas").value = reAnotacion.test(notas)
+        ? notas.replace(reAnotacion, etiqueta)
+        : (notas ? etiqueta + ". " + notas : etiqueta);
+      setDirty(true);
     }
 
     function depNumero(id) {
@@ -4027,7 +4133,10 @@
         fecha_fin_remanencia: "", // calculado por Excel
         estatus: "",              // calculado por Excel
         tipo_pep: $("f_tipo_pep").value,
-        persona_id_relacionado: $("wrap_relacionado").classList.contains("hidden") ? "" : $("f_persona_id_relacionado").value,
+        // Se lee siempre del select, no "" cuando el campo está oculto: los
+        // Principal usan esta columna para el par propietario/suplente y
+        // devolver "" borraba ese vínculo al guardar.
+        persona_id_relacionado: $("f_persona_id_relacionado").value,
         fuente_descripcion: $("f_fuente_descripcion").value.trim(),
         fuenteurl: $("f_fuente_url").value.trim(),
         fecha_captura: $("f_fecha_captura").value || hoyISO(),
@@ -4046,6 +4155,10 @@
       if (!p.dependencia_efectiva_id) errors.dependencia_efectiva_id = "Requerido.";
       if (!p.fecha_inicio_cargo) errors.fecha_inicio_cargo = "Requerido.";
       if (!p.tipo_pep) errors.tipo_pep = "Requerido.";
+      if ((p.tipo_pep === "Familiar" || p.tipo_pep === "Asociado") && !p.persona_id_relacionado)
+        errors.persona_id_relacionado = "Requerido: el PEP principal del que es familiar o asociado.";
+      if (p.persona_id_relacionado && p.persona_id_relacionado === p.persona_id)
+        errors.persona_id_relacionado = "No puede ligarse a sí misma.";
       if (p.curp && p.curp.length !== 18) errors.curp = "Si se captura, debe tener exactamente 18 caracteres.";
       if (p.rfc && p.rfc.length !== 12 && p.rfc.length !== 13) errors.rfc = "Si se captura, debe tener 12 o 13 caracteres.";
       if (p.fuenteurl) { try { new URL(p.fuenteurl); } catch (_) { errors.fuente_url = "URL no válida."; } }
@@ -4060,6 +4173,7 @@
     const CAMPOS_ERROR = [
       "nombre_completo", "curp", "rfc", "cargo_id", "dependencia_efectiva_id",
       "fecha_inicio_cargo", "tipo_pep", "entidad_federativa", "municipio", "fuente_url",
+      "persona_id_relacionado",
     ];
 
     function limpiarErrores() {
@@ -4312,7 +4426,12 @@
     // =============================================================
     // ESTADO "DIRTY", TOAST Y OVERLAY
     // =============================================================
-    function marcarDirty() { setDirty(true); }
+    // El buscador de relacionado no es un campo del registro: teclear ahí no
+    // ensucia el borrador.
+    function marcarDirty(e) {
+      if (e && e.target && e.target.id === "f_rel_buscar") return;
+      setDirty(true);
+    }
     function setDirty(v) {
       estadoApp.dirty = v;
       const ind = $("dirtyIndicator");
