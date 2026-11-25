@@ -2562,9 +2562,9 @@
     // personas en 1.9 MB, y el cruce se hace en el navegador.
     //
     // Techo medido el 25-nov-2026 contra la base real, no estimado: de 4,521
-    // claves de nombre que trae Wikidata, 314 filas sin foto empatan — 218 por
-    // nombre idéntico y 96 por empate laxo — y corresponden a 244 personas
-    // distintas de Wikidata. Sube la cobertura de 2.9% a ~3.4%.
+    // claves de nombre que trae Wikidata, 297 filas sin foto empatan — 218 por
+    // nombre idéntico y 79 por empate laxo — y corresponden a 238 personas
+    // distintas de Wikidata. Sube la cobertura de 2.9% a ~3.3%.
     //
     // Es una vía de CIENTOS, no de miles: el volumen sigue estando en el INE
     // (que ya dio 1,605) y en los OPLEs estatales. No volver a estimarlo de
@@ -2658,9 +2658,15 @@
     }
 
     // Dos índices: clave exacta y por apellidos para el empate laxo. El laxo
-    // agrega ~44% (96 sobre 218 en la medición), porque la base suele traer un
+    // agrega ~36% (79 sobre 218 en la medición), porque la base suele traer un
     // nombre de pila más que Wikidata: "Layda Elena Sansores San Román"
     // contra "Layda Sansores".
+    //
+    // OJO al tocar `pila`: tiene que quedar VACÍA cuando el nombre trae menos
+    // de tres palabras, que es lo que hace slice(0, -2). Si en vez de eso
+    // devuelve el nombre completo, "Israel Martínez" empata con cualquier
+    // Martínez López y el ruido se vuelve mayoría — pasó al medir esto con un
+    // script equivalente en PowerShell, donde el índice negativo da la vuelta.
     function indexarCandidatos(cands) {
       const exacto = {};
       const porApellidos = {};
