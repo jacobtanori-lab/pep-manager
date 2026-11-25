@@ -751,6 +751,18 @@
           <div id="modalVerCredito"></div>
         </div>
       </div>
+      <!-- Buscar foto en Wikidata/Commons. Solo aparece cuando la persona NO
+           tiene foto en el manifiesto, que es el hueco que vale la pena llenar. -->
+      <div id="modalVerBuscar" class="hidden px-5 pt-4">
+        <div class="flex items-center gap-3 flex-wrap">
+          <button id="btnBuscarFoto" type="button"
+            class="text-sm font-medium px-3 py-2 rounded-lg border border-slate-300 hover:bg-slate-50 text-slate-700 transition disabled:opacity-50">
+            Buscar foto en Wikidata
+          </button>
+          <p id="buscarFotoStatus" class="text-xs text-slate-500"></p>
+        </div>
+        <div id="buscarFotoResultados" class="hidden mt-3 space-y-3"></div>
+      </div>
       <div id="modalVerBody" class="p-5 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 max-h-[70vh] overflow-auto"></div>
       <div class="px-5 py-3 border-t border-slate-200 flex justify-end gap-2">
         <button id="btnEditarDesdeVer" type="button"
@@ -1902,6 +1914,555 @@
       return pintarFoto(personaId, "modalVerFoto", "modalVerImg", "modalVerCredito");
     }
 
+    // -------------------------------------------------------------
+    // Buscar foto en Wikidata / Commons desde la propia app
+    // -------------------------------------------------------------
+    // Hace, para una persona suelta, lo que el pipeline de pep-tools hace por
+    // lotes. Las APIs de Wikimedia mandan Access-Control-Allow-Origin "*", al
+    // contrario de las fuentes de gobierno que obligaron a montar el espejo,
+    // así que se consultan directo del navegador: sin espejo y sin scripts.
+    //
+    // Dos reglas NO se relajan por venir de un botón: el botón propone y el
+    // humano publica, y sin autor en Commons no se publica, porque CC BY
+    // obliga a dar crédito.
+
+    const WD_API = "https://www.wikidata.org/w/api.php";
+    const COMMONS_API = "https://commons.wikimedia.org/w/api.php";
+    const COMMONS_FILEPATH = "https://commons.wikimedia.org/wiki/Special:FilePath/";
+
+    const QID_MEXICO = "Q96";
+    // Ocupaciones que valen como señal de cargo público: político,
+    // funcionario, diplomático. No identifican a la persona, pero descartan
+    // al futbolista homónimo.
+    const QIDS_CARGO_PUBLICO = ["Q82955", "Q212238", "Q193391"];
+
+    // Palabras demasiado comunes para que su coincidencia signifique algo.
+    const PALABRAS_VACIAS = [
+      "para", "desde", "sobre", "entre", "estado", "estados", "municipio",
+      "ayuntamiento", "mexicano", "mexicana", "mexico", "general", "publico",
+      "publica", "nacional", "federal", "ciudad",
+    ];
+
+    // Las APIs de MediaWiki dan CORS anónimo solo con origin=*.
+    async function wikimediaJSON(base, params) {
+      const url = base + "?origin=*&format=json&" + new URLSearchParams(params).toString();
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error("Wikimedia respondió " + resp.status + ".");
+      return resp.json();
+    }
+
+    // El campo Artist de Commons viene como HTML (un enlace al perfil del
+    // autor). DOMParser no carga recursos ni ejecuta scripts, a diferencia de
+    // asignar innerHTML, y esto es contenido de un wiki que cualquiera edita.
+    function textoPlano(html) {
+      const doc = new DOMParser().parseFromString(String(html || ""), "text/html");
+      return (doc.body.textContent || "").replace(/\s+/g, " ").trim();
+    }
+
+    // Coincidencia laxa: comparten al menos una palabra significativa.
+    // "Secretario de Hacienda y Crédito Público" contra "Secretaría de
+    // Hacienda" tiene que dar positivo, y un igual estricto no lo daría.
+    // Reusa normalizarCol porque hace justo la transformación que hace falta
+    // (sin acentos, minúsculas), aunque se escribió para nombres de columna.
+    function coincidenPalabras(a, b) {
+      const tokens = (s) => normalizarCol(s).split(/[^a-z0-9]+/)
+        .filter((w) => w.length >= 4 && PALABRAS_VACIAS.indexOf(w) === -1);
+      const ta = tokens(a), tb = tokens(b);
+      return ta.some((w) => tb.indexOf(w) !== -1);
+    }
+
+    function valoresQID(entidad, prop) {
+      const claims = ((entidad || {}).claims || {})[prop] || [];
+      return claims
+        .map((c) => (((c.mainsnak || {}).datavalue || {}).value || {}).id || null)
+        .filter(Boolean);
+    }
+
+    function valorSimple(entidad, prop) {
+      const claims = ((entidad || {}).claims || {})[prop] || [];
+      for (let i = 0; i < claims.length; i++) {
+        const dv = ((claims[i].mainsnak || {}).datavalue || {}).value;
+        if (dv !== undefined && dv !== null) return dv;
+      }
+      return null;
+    }
+
+    function etiquetaDe(entidad) {
+      const l = (entidad || {}).labels || {};
+      return ((l.es || l.en || {}).value) || "";
+    }
+
+    function descripcionDe(entidad) {
+      const d = (entidad || {}).descriptions || {};
+      return ((d.es || d.en || {}).value) || "";
+    }
+
+    // Busca candidatos y los evalúa contra el registro. Tres llamadas en
+    // total, sin importar cuántos candidatos haya.
+    async function buscarFotoWikidata(persona) {
+      // wbsearchentities encuentra por ALIAS, que es exactamente lo que el
+      // barrido por título de Wikipedia no puede: el ítem de Amador Zamora se
+      // titula "Edgar Amador Zamora" y su alias es el nombre completo que
+      // tiene la base. Ahí se iba buena parte del recall perdido.
+      const busqueda = await wikimediaJSON(WD_API, {
+        action: "wbsearchentities", language: "es", uselang: "es",
+        type: "item", limit: "7", search: persona.nombre,
+      });
+      const ids = (busqueda.search || []).map((s) => s.id).filter(Boolean);
+      if (ids.length === 0) return [];
+
+      const ent = await wikimediaJSON(WD_API, {
+        action: "wbgetentities", ids: ids.join("|"),
+        props: "claims|descriptions|labels", languages: "es|en",
+      });
+      const entidades = ent.entities || {};
+
+      // Las propiedades devuelven QIDs, no texto. Se resuelven todas las
+      // etiquetas necesarias de un jalón (wbgetentities acepta 50 ids).
+      const qids = {};
+      ids.forEach((id) => {
+        ["P27", "P39", "P106", "P19"].forEach((p) => {
+          valoresQID(entidades[id], p).forEach((q) => { qids[q] = true; });
+        });
+      });
+      const porResolver = Object.keys(qids).slice(0, 50);
+      const etiquetas = {};
+      if (porResolver.length > 0) {
+        const lbl = await wikimediaJSON(WD_API, {
+          action: "wbgetentities", ids: porResolver.join("|"),
+          props: "labels", languages: "es|en",
+        });
+        Object.keys(lbl.entities || {}).forEach((q) => {
+          etiquetas[q] = etiquetaDe(lbl.entities[q]);
+        });
+      }
+
+      return ids
+        .map((id) => evaluarCandidato(entidades[id], persona, etiquetas))
+        .filter(Boolean)
+        .sort((a, b) => b.senales.length - a.senales.length);
+    }
+
+    // Compara el ítem contra el registro y devuelve las señales que coinciden
+    // y los conflictos. NO descarta por sí solo: los ítems de funcionarios
+    // recién nombrados suelen venir esqueléticos — el de Amador Zamora no
+    // tiene P27 ni P39 — así que exigir una propiedad fija mata el recall.
+    // Lo que importa es que haya al menos UNA señal más que el nombre.
+    function evaluarCandidato(entidad, persona, etiquetas) {
+      if (!entidad || !entidad.id) return null;
+      const senales = [];
+      const notas = [];
+      const nombreQID = (q) => etiquetas[q] || q;
+
+      // Nacionalidad. Si P27 falta, la descripción suele decirlo
+      // ("economista mexicano"): señal débil, pero descarta al homónimo
+      // español o chileno, que fue el error real del primer barrido.
+      const paises = valoresQID(entidad, "P27");
+      const descripcion = descripcionDe(entidad);
+      if (paises.indexOf(QID_MEXICO) !== -1) {
+        senales.push({ que: "Nacionalidad", valor: "mexicana" });
+      } else if (paises.length > 0) {
+        notas.push("Wikidata le da otra nacionalidad: " + paises.map(nombreQID).join(", ") + ".");
+      } else if (/mexican/.test(normalizarCol(descripcion))) {
+        senales.push({ que: "Nacionalidad", valor: "mexicana (por la descripción)" });
+      }
+
+      // Fecha de nacimiento: la señal más fuerte, pero la base solo la tiene
+      // en 4.3% de los registros. Cuando está y NO coincide, es un conflicto
+      // que vale más que cualquier coincidencia.
+      const nacimiento = valorSimple(entidad, "P569");
+      if (nacimiento && nacimiento.time && persona.fechaNacimiento) {
+        const m = /^[+-](\d{4}-\d{2}-\d{2})/.exec(nacimiento.time);
+        if (m) {
+          if (m[1] === persona.fechaNacimiento) {
+            senales.push({ que: "Fecha de nacimiento", valor: m[1] });
+          } else {
+            notas.push("La fecha de nacimiento NO coincide: Wikidata dice " + m[1] +
+              " y la base " + persona.fechaNacimiento + ".");
+          }
+        }
+      }
+
+      // Cargo contra el catálogo: la confirmación más clara cuando existe.
+      const cargos = valoresQID(entidad, "P39").map(nombreQID).filter(Boolean);
+      if (persona.cargo && cargos.length > 0) {
+        const hit = cargos.filter((c) => coincidenPalabras(c, persona.cargo))[0];
+        if (hit) senales.push({ que: "Cargo", valor: hit });
+      }
+
+      // Lugar de nacimiento contra municipio/entidad. Señal débil — nadie
+      // tiene que gobernar donde nació — pero cuando pega, pega.
+      const lugares = valoresQID(entidad, "P19").map(nombreQID).filter(Boolean);
+      const geo = [persona.municipio, persona.entidad].filter(Boolean).join(" ");
+      if (geo && lugares.length > 0) {
+        const hit = lugares.filter((l) => coincidenPalabras(l, geo))[0];
+        if (hit) senales.push({ que: "Lugar de nacimiento", valor: hit });
+      }
+
+      const ocupaciones = valoresQID(entidad, "P106");
+      if (ocupaciones.some((q) => QIDS_CARGO_PUBLICO.indexOf(q) !== -1)) {
+        senales.push({ que: "Ocupación", valor: "cargo público" });
+      }
+
+      const archivo = valorSimple(entidad, "P18");
+      return {
+        qid: entidad.id,
+        etiqueta: etiquetaDe(entidad),
+        descripcion: descripcion,
+        archivo: (typeof archivo === "string" && archivo) ? archivo : null,
+        senales: senales,
+        notas: notas,
+        autor: "", licencia: "", pagina: "", thumb: "",
+      };
+    }
+
+    // Autor y licencia de varios archivos en una sola llamada. Es el paso que
+    // decide si una foto se puede publicar o no.
+    async function atribucionCommons(archivos) {
+      const out = {};
+      if (archivos.length === 0) return out;
+      const data = await wikimediaJSON(COMMONS_API, {
+        action: "query", prop: "imageinfo", iiprop: "extmetadata|url",
+        iiurlwidth: "360", titles: archivos.map((a) => "File:" + a).join("|"),
+      });
+      const paginas = ((data.query || {}).pages) || {};
+      Object.keys(paginas).forEach((k) => {
+        const p = paginas[k];
+        const info = (p.imageinfo || [])[0];
+        if (!info) return;
+        const meta = info.extmetadata || {};
+        // Commons normaliza los títulos con guiones bajos; P18 los trae con
+        // espacios. Se indexa con espacios para que empaten.
+        const nombre = String(p.title || "").replace(/^File:/, "").replace(/_/g, " ");
+        out[nombre] = {
+          autor: textoPlano((meta.Artist || {}).value),
+          licencia: textoPlano((meta.LicenseShortName || {}).value),
+          pagina: info.descriptionurl || "",
+          thumb: info.thumburl || (COMMONS_FILEPATH + encodeURIComponent(nombre) + "?width=360"),
+        };
+      });
+      return out;
+    }
+
+    // Por qué un candidato no se puede publicar. "" significa que sí.
+    function motivoNoPublicable(cand) {
+      if (!cand.archivo) return "El ítem no tiene imagen (P18) en Wikidata.";
+      if (cand.senales.length === 0) {
+        return "Solo coincide el nombre. Hace falta otra señal — cargo, fecha de " +
+          "nacimiento, lugar o nacionalidad — para publicar sin riesgo de confundir personas.";
+      }
+      if (!cand.autor) {
+        return "Commons no devolvió autor, y CC BY obliga a dar crédito: no se publica.";
+      }
+      return "";
+    }
+
+    // Baja la imagen, la sube a OneDrive y agrega su fila al manifiesto.
+    async function publicarFotoCandidato(persona, cand) {
+      // Special:FilePath resuelve el thumb sin tener que adivinar la ruta del
+      // hash de Commons, y manda CORS abierto.
+      const img = await fetch(COMMONS_FILEPATH + encodeURIComponent(cand.archivo) + "?width=360");
+      if (!img.ok) throw new Error("Commons no entregó la imagen (" + img.status + ").");
+      const blob = await img.blob();
+
+      // Se guarda como <persona_id>.jpg aunque el original sea PNG: es la
+      // convención que ya usa migrar_fotos.ps1 y la que la app espera.
+      const subida = await graphFetch(
+        GRAPH_BASE + "/me/drive/root:" + FOTOS_PATH + "/" +
+          encodeURIComponent(persona.id + ".jpg") + ":/content",
+        { method: "PUT", headers: { "Content-Type": blob.type || "image/jpeg" }, body: blob }
+      );
+      if (!subida.ok) throw new Error(await mensajeErrorGraph(subida));
+
+      const info = {
+        autor: cand.autor,
+        licencia: cand.licencia,
+        fuente: "",
+        pagina: cand.pagina ||
+          ("https://commons.wikimedia.org/wiki/File:" + encodeURIComponent(cand.archivo)),
+      };
+      await agregarFilaManifiesto(persona.id, info);
+
+      // Refleja el cambio en memoria para que la foto aparezca sin recargar.
+      if (fotosManifiesto) fotosManifiesto[persona.id] = info;
+      delete cacheFotoURL[persona.id];
+    }
+
+    // Reescribe _procedencia_fotos.csv con la fila nueva. Lee el archivo
+    // completo antes de escribir para no perder lo que haya agregado el
+    // pipeline de pep-tools, deduplica por persona_id como migrar_fotos.ps1,
+    // y usa If-Match para que una escritura simultánea falle en vez de
+    // sobrescribir en silencio.
+    async function agregarFilaManifiesto(personaId, info) {
+      const rutaMeta = GRAPH_BASE + "/me/drive/root:" + FOTOS_MANIFIESTO + ":";
+      const rutaContenido = rutaMeta + "/content";
+
+      let filas = [];
+      const actual = await graphFetch(rutaContenido, {});
+      if (actual.ok) {
+        filas = parseCSV(decodificarBuffer(await actual.arrayBuffer()));
+      } else if (actual.status !== 404) {
+        // Un error transitorio de lectura NO debe terminar en un manifiesto
+        // de una sola fila: mejor no escribir nada.
+        throw new Error("No se pudo leer el manifiesto (" + actual.status +
+          "). No se escribió nada para no perder las filas que ya tiene.");
+      }
+
+      if (filas.length === 0 || filas[0].length === 0) {
+        filas = [["persona_id", "autor", "licencia", "fuente", "pagina_commons"]];
+      }
+      const col = {};
+      filas[0].forEach((h, i) => { col[normalizarCol(h)] = i; });
+      const pos = (n) => (col[n] === undefined ? -1 : col[n]);
+      const iId = pos("persona_id");
+      if (iId === -1) throw new Error("El manifiesto no tiene columna persona_id.");
+
+      const nueva = filas[0].map(() => "");
+      const set = (n, v) => { const i = pos(n); if (i !== -1) nueva[i] = v || ""; };
+      set("persona_id", personaId);
+      set("autor", info.autor);
+      set("licencia", info.licencia);
+      set("fuente", info.fuente);
+      set("pagina_commons", info.pagina);
+      if (pos("pagina_commons") === -1) set("pagina_wikipedia", info.pagina);
+
+      const resto = filas.slice(1).filter((f) =>
+        String(f[iId] || "").trim() !== personaId &&
+        f.some((c) => String(c === null || c === undefined ? "" : c).trim() !== ""));
+      const salida = [filas[0]].concat(resto, [nueva])
+        .map((f) => f.map(celdaCSV).join(",")).join("\r\n") + "\r\n";
+
+      // eTag del ITEM, no del contenido: el GET de /content redirige a la CDN
+      // y sus encabezados ya no son del archivo en OneDrive.
+      let etag = "";
+      try {
+        const meta = await graphFetch(rutaMeta, {});
+        if (meta.ok) etag = (await meta.json()).eTag || "";
+      } catch (_) { /* sin eTag se escribe igual: es la primera vez */ }
+
+      const cabeceras = { "Content-Type": "text/csv; charset=utf-8" };
+      if (etag) cabeceras["If-Match"] = etag;
+      const resp = await graphFetch(rutaContenido, {
+        method: "PUT",
+        headers: cabeceras,
+        // BOM: el manifiesto es UTF-8 CON BOM, como lo deja migrar_fotos.ps1.
+        body: new Blob(["﻿" + salida], { type: "text/csv;charset=utf-8" }),
+      });
+      if (!resp.ok) throw new Error(await mensajeErrorGraph(resp));
+    }
+
+    // Todos los campos entre comillas, como los deja migrar_fotos.ps1, para
+    // que un nombre de autor con coma no rompa el archivo.
+    function celdaCSV(v) {
+      return '"' + String(v === null || v === undefined ? "" : v).replace(/"/g, '""') + '"';
+    }
+
+    // Saca del renglón abierto los campos que sirven para confirmar identidad.
+    function personaParaBusqueda() {
+      const fila = personaEnModal;
+      if (!fila) return null;
+      const idx = datosCargados.idx;
+      const valores = fila.values[0];
+      const dato = (c) => {
+        const i = idxCol(idx, c);
+        if (i === undefined) return "";
+        const v = valores[i];
+        return String(v === null || v === undefined ? "" : v).trim();
+      };
+      const cat = mapCargo[dato("cargo_id")];
+      return {
+        id: dato("persona_id"),
+        nombre: dato("nombre_completo"),
+        cargo: cat ? (cat.cargo || cat.nombre || "") : "",
+        entidad: dato("entidad_federativa"),
+        municipio: dato("municipio"),
+        fechaNacimiento: excelSerialToInputDate(dato("fecha_nacimiento")),
+      };
+    }
+
+    // Estado inicial del bloque. Solo se ofrece buscar cuando la persona NO
+    // tiene foto: si ya la tiene, no hay hueco que llenar.
+    function prepararBuscarFoto(personaId) {
+      const status = $("buscarFotoStatus");
+      status.textContent = "";
+      status.className = "text-xs text-slate-500";
+      const caja = $("buscarFotoResultados");
+      caja.innerHTML = "";
+      caja.classList.add("hidden");
+      $("btnBuscarFoto").disabled = false;
+      $("modalVerBuscar").classList.toggle("hidden", tieneFoto(personaId));
+    }
+
+    function pintarCandidatosFoto(persona, candidatos) {
+      const caja = $("buscarFotoResultados");
+      caja.innerHTML = "";
+      caja.classList.remove("hidden");
+
+      candidatos.forEach((cand) => {
+        const card = document.createElement("div");
+        card.className = "flex items-start gap-3 border border-slate-200 rounded-lg p-3";
+
+        const miniatura = document.createElement(cand.thumb ? "img" : "div");
+        miniatura.className = cand.thumb
+          ? "w-20 object-cover rounded border border-slate-300 bg-slate-100 shrink-0"
+          : "w-20 rounded border border-slate-200 bg-slate-100 shrink-0";
+        miniatura.style.height = "6.5rem";
+        if (cand.thumb) {
+          miniatura.src = cand.thumb;
+          miniatura.alt = "Candidata a fotografía de " + persona.nombre;
+        } else {
+          miniatura.title = "El ítem no tiene imagen";
+        }
+        card.appendChild(miniatura);
+
+        const info = document.createElement("div");
+        info.className = "min-w-0 flex-1";
+
+        const titulo = document.createElement("div");
+        titulo.className = "text-sm font-medium text-slate-800";
+        titulo.textContent = cand.etiqueta || cand.qid;
+        info.appendChild(titulo);
+
+        if (cand.descripcion) {
+          const d = document.createElement("div");
+          d.className = "text-xs text-slate-500";
+          d.textContent = cand.descripcion;
+          info.appendChild(d);
+        }
+
+        const enlace = document.createElement("a");
+        enlace.href = "https://www.wikidata.org/wiki/" + encodeURIComponent(cand.qid);
+        enlace.target = "_blank";
+        enlace.rel = "noopener noreferrer";
+        enlace.className = "text-xs text-blue-600 hover:underline";
+        enlace.textContent = cand.qid;
+        info.appendChild(enlace);
+
+        // Las señales son la razón de ser del botón: sin al menos una, el
+        // nombre solo no alcanza para decir que es la misma persona.
+        const chips = document.createElement("div");
+        chips.className = "flex flex-wrap gap-1 mt-2";
+        if (cand.senales.length === 0) {
+          const chip = document.createElement("span");
+          chip.className = "text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600";
+          chip.textContent = "Solo coincide el nombre";
+          chips.appendChild(chip);
+        } else {
+          cand.senales.forEach((s) => {
+            const chip = document.createElement("span");
+            chip.className = "text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-800";
+            chip.textContent = s.que + ": " + s.valor;
+            chips.appendChild(chip);
+          });
+        }
+        info.appendChild(chips);
+
+        cand.notas.forEach((n) => {
+          const p = document.createElement("p");
+          p.className = "text-xs text-amber-700 mt-1";
+          p.textContent = n;
+          info.appendChild(p);
+        });
+
+        if (cand.archivo) {
+          const atr = document.createElement("p");
+          atr.className = "text-xs text-slate-500 mt-1";
+          atr.textContent = "Atribución: " + (cand.autor || "SIN AUTOR") +
+            " · " + (cand.licencia || "sin etiqueta de licencia");
+          info.appendChild(atr);
+        }
+
+        const pie = document.createElement("div");
+        pie.className = "mt-2";
+        const motivo = motivoNoPublicable(cand);
+        if (motivo) {
+          const p = document.createElement("p");
+          p.className = "text-xs text-slate-600";
+          p.textContent = motivo;
+          pie.appendChild(p);
+        } else {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "text-sm font-medium px-3 py-1.5 rounded-lg bg-blue-600 " +
+            "hover:bg-blue-700 text-white transition shadow-sm disabled:opacity-50";
+          btn.textContent = "Publicar esta foto";
+          const msg = document.createElement("span");
+          msg.className = "text-xs ml-2 text-slate-500";
+          btn.addEventListener("click", async () => {
+            btn.disabled = true;
+            msg.className = "text-xs ml-2 text-slate-500";
+            msg.textContent = "Publicando…";
+            try {
+              await publicarFotoCandidato(persona, cand);
+              await mostrarFotoModal(persona.id);
+              caja.innerHTML = "";
+              caja.classList.add("hidden");
+              const st = $("buscarFotoStatus");
+              st.className = "text-xs text-green-700";
+              st.textContent = "Foto publicada, con crédito a " + cand.autor + ".";
+            } catch (err) {
+              btn.disabled = false;
+              msg.className = "text-xs ml-2 text-red-600";
+              msg.textContent = err.message || String(err);
+            }
+          });
+          pie.appendChild(btn);
+          pie.appendChild(msg);
+        }
+        info.appendChild(pie);
+
+        card.appendChild(info);
+        caja.appendChild(card);
+      });
+    }
+
+    $("btnBuscarFoto").addEventListener("click", async () => {
+      const persona = personaParaBusqueda();
+      const status = $("buscarFotoStatus");
+      const caja = $("buscarFotoResultados");
+      if (!persona || !persona.nombre) {
+        status.className = "text-xs text-red-600";
+        status.textContent = "El registro no tiene nombre_completo.";
+        return;
+      }
+      $("btnBuscarFoto").disabled = true;
+      caja.innerHTML = "";
+      caja.classList.add("hidden");
+      status.className = "text-xs text-slate-500";
+      status.textContent = "Buscando en Wikidata…";
+      try {
+        const candidatos = await buscarFotoWikidata(persona);
+        if (candidatos.length === 0) {
+          status.className = "text-xs text-slate-600";
+          status.textContent = "Wikidata no tiene ningún ítem con ese nombre. En cargos " +
+            "municipales es lo normal: ahí la vía de volumen son el INE y los OPLEs.";
+          return;
+        }
+        status.textContent = "Consultando autor y licencia en Commons…";
+        const atrib = await atribucionCommons(
+          candidatos.map((c) => c.archivo).filter(Boolean)
+        );
+        candidatos.forEach((c) => {
+          const a = c.archivo ? atrib[c.archivo] : null;
+          if (a) {
+            c.autor = a.autor; c.licencia = a.licencia;
+            c.pagina = a.pagina; c.thumb = a.thumb;
+          }
+        });
+        pintarCandidatosFoto(persona, candidatos);
+        const conFoto = candidatos.filter((c) => c.archivo).length;
+        const publicables = candidatos.filter((c) => !motivoNoPublicable(c)).length;
+        status.className = "text-xs text-slate-600";
+        status.textContent = candidatos.length + " candidato(s), " + conFoto +
+          " con imagen, " + publicables + " publicable(s). Revisa las señales antes de publicar.";
+      } catch (err) {
+        status.className = "text-xs text-red-600";
+        status.textContent = "Error al buscar: " + (err.message || err);
+      } finally {
+        $("btnBuscarFoto").disabled = false;
+      }
+    });
+
     // Miniatura para la tabla de resultados. Solo pide la imagen si el
     // manifiesto dice que existe, para no lanzar 404 por cada fila.
     function celdaMiniatura(personaId) {
@@ -2371,8 +2932,11 @@
         body.appendChild(campo);
       });
 
-      // Foto en grande + crédito (asíncrono, no retrasa la apertura).
-      mostrarFotoModal(pid);
+      // Foto en grande + crédito (asíncrono, no retrasa la apertura). El
+      // bloque de búsqueda se arma después, porque saber si hay hueco que
+      // llenar exige tener ya cargado el manifiesto.
+      $("modalVerBuscar").classList.add("hidden");
+      mostrarFotoModal(pid).then(() => prepararBuscarFoto(pid));
 
       $("modalVer").classList.remove("hidden");
     }
@@ -3206,7 +3770,9 @@
 
     // Mensaje legible para errores de Graph en operaciones de escritura.
     async function mensajeErrorGraph(resp) {
-      if (resp.status === 409) return "Otra persona o sesión modificó el archivo. Recarga y reintenta.";
+      if (resp.status === 409 || resp.status === 412) {
+        return "Otra persona o sesión modificó el archivo. Recarga y reintenta.";
+      }
       let detalle = resp.status + " " + resp.statusText;
       try {
         const j = await resp.json();
