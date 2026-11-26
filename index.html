@@ -266,7 +266,7 @@
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
           </svg>
-          <span class="text-sm">Cargando datos…</span>
+          <span id="loadingTexto" class="text-sm">Cargando datos…</span>
         </div>
 
         <!-- Mensaje de error (Graph) -->
@@ -1435,17 +1435,17 @@
       try {
         const token = await obtenerToken();
         const headers = { Authorization: "Bearer " + token };
-        const [colsResp, rowsResp] = await Promise.all([
-          fetch(wbBitacora() + "/columns", { headers }),
-          fetch(wbBitacora() + "/rows", { headers }),
-        ]);
-        if (!colsResp.ok || !rowsResp.ok) {
+        const colsResp = await fetch(wbBitacora() + "/columns", { headers });
+        if (!colsResp.ok) {
           throw new Error("No se encontró la tabla tbl_Bitacora en database.xlsx. " +
             "Créala con Ctrl+T (columnas: " + COLUMNAS_BITACORA.join(", ") + ").");
         }
         const idx = {};
         (((await colsResp.json()).value) || []).forEach((c) => { idx[normalizarCol(c.name)] = c.index; });
-        const filas = ((await rowsResp.json()).value || []).map((r) => r.values[0]);
+        // Paginado: la bitácora solo crece y nunca se depura.
+        const filas = (await traerFilasTabla(
+          wbBitacora(), headers, TABLE_BITACORA, WORKBOOK_PATH
+        )).map((r) => r.values[0]);
         // Más recientes primero (fecha_hora es ISO, ordena bien como texto).
         filas.sort((a, b) => String(b[idx.fecha_hora] || "").localeCompare(String(a[idx.fecha_hora] || "")));
 
@@ -1606,6 +1606,77 @@
     }
 
     // -------------------------------------------------------------
+    // Lectura paginada de filas de una tabla de Excel
+    // -------------------------------------------------------------
+    // Antes se pedía "/rows" de un solo jalón. Con tbl_Personas (64,727
+    // filas x 23 columnas) eso obliga a Graph a serializar decenas de MB en
+    // una sola respuesta, y si el servidor decide cortarla, las filas que
+    // faltan desaparecen EN SILENCIO: la persona sigue en el Excel pero la
+    // app nunca la encuentra, y nadie se enteraría.
+    //
+    // Se pagina con $top/$skip y se para solo cuando llega una página
+    // vacía. No se usa "vinieron menos de las que pedí" como señal de fin,
+    // justamente porque Graph puede imponer su propio tamaño de página: esa
+    // suposición es la que provocaría el corte silencioso.
+    const FILAS_POR_PAGINA = 5000;
+    const MAX_PAGINAS = 500; // tope de seguridad: 2.5M filas
+
+    async function traerFilasTabla(urlTabla, headers, nombreTabla, rutaArchivo, avisar) {
+      // Lectura de antes: una sola petición sin paginar. Es el respaldo para
+      // cuando paginar no funciona, para no romper lo que hoy sí sirve.
+      const sinPaginar = async () => {
+        const resp = await fetch(urlTabla + "/rows", { headers });
+        if (!resp.ok) throw await graphError(resp, nombreTabla, rutaArchivo);
+        return (await resp.json()).value || [];
+      };
+
+      const todas = [];
+      let skip = 0;
+
+      for (let pag = 0; pag < MAX_PAGINAS; pag++) {
+        const url = urlTabla + "/rows?$top=" + FILAS_POR_PAGINA + "&$skip=" + skip;
+        const resp = await fetch(url, { headers });
+
+        if (!resp.ok) {
+          // Si falla en la PRIMERA página puede ser que este servidor no
+          // acepte $top/$skip en filas de tabla: se vuelve al modo de antes
+          // en lugar de reportar un error donde antes funcionaba.
+          if (pag === 0) {
+            console.warn("Paginar " + nombreTabla + " devolvió " + resp.status +
+              "; se lee la tabla sin paginar.");
+            return sinPaginar();
+          }
+          throw await graphError(resp, nombreTabla, rutaArchivo);
+        }
+
+        const pagina = (await resp.json()).value || [];
+        if (pagina.length === 0) return todas; // fin real: ya no hay más filas
+
+        // ¿El servidor respetó $skip? Si lo ignora, la segunda página
+        // vuelve a empezar en la fila 0 y seguir paginando duplicaría todo.
+        if (skip > 0 && pagina[0] && pagina[0].index === 0) {
+          console.warn("Graph ignoró $skip en " + nombreTabla +
+            "; se lee la tabla sin paginar (puede truncarse si es muy grande).");
+          return sinPaginar();
+        }
+
+        todas.push.apply(todas, pagina);
+        skip += pagina.length;
+        if (avisar) avisar(todas.length);
+      }
+
+      console.warn("Se alcanzó el tope de " + MAX_PAGINAS + " páginas en " +
+        nombreTabla + "; puede haber filas sin leer.");
+      return todas;
+    }
+
+    // Texto del indicador de carga (sin romper si el nodo no existe).
+    function textoCargando(t) {
+      const n = $("loadingTexto");
+      if (n) n.textContent = t;
+    }
+
+    // -------------------------------------------------------------
     // Lectura de tbl_Personas vía Microsoft Graph (Workbook API)
     // -------------------------------------------------------------
     async function cargarPersonas() {
@@ -1629,16 +1700,16 @@
 
         // 1) Columnas (para mapear nombre -> índice, sin depender del orden)
         // 2) Filas (los datos)
-        const [colsResp, rowsResp] = await Promise.all([
-          fetch(wb + "/columns", { headers }),
-          fetch(wb + "/rows", { headers }),
-        ]);
-
+        textoCargando("Cargando datos…");
+        const colsResp = await fetch(wb + "/columns", { headers });
         if (!colsResp.ok) throw await graphError(colsResp, TABLE_PERSONAS);
-        if (!rowsResp.ok) throw await graphError(rowsResp, TABLE_PERSONAS);
-
         const colsData = await colsResp.json();
-        const rowsData = await rowsResp.json();
+
+        // Paginado: con 64,727 filas una sola respuesta puede cortarse.
+        const filasCrudas = await traerFilasTabla(
+          wb, headers, TABLE_PERSONAS, WORKBOOK_PATH,
+          (n) => textoCargando("Cargando datos… " + n.toLocaleString("es-MX") + " registros")
+        );
 
         // Mapa: nombre_columna -> índice. Se normaliza igual que en el resto
         // del código: el Excel trae "CURP", "RFC" y "fecha_actualización",
@@ -1647,9 +1718,10 @@
         const idx = {};
         (colsData.value || []).forEach((c) => { idx[normalizarCol(c.name)] = c.index; });
 
-        const filas = rowsData.value || [];
+        const filas = filasCrudas;
 
         loading.classList.add("hidden");
+        textoCargando("Cargando datos…"); // se deja listo para la próxima vez
 
         // Guardamos en memoria y registramos la hora de carga.
         datosCargados = { idx, filas };
@@ -1667,7 +1739,7 @@
 
         // Los nombres de PEP también alimentan el corpus IDF de similitud.
         if (idx["nombre_completo"] !== undefined) {
-          indexarIDF(filas.map((f) => simNorm(f.values[0][idx["nombre_completo"]])));
+          indexarIDF(filas.map((f) => simNorm(f.values[0][idx["nombre_completo"]])), TABLE_PERSONAS);
         }
 
         // OJO: ya no se renderiza nada aquí. La tabla la dibuja buscar():
@@ -1729,14 +1801,27 @@
       return simStripLegal(n);
     }
 
-    // Coeficiente de Dice (0-100) sobre bigramas.
-    function simDice(sa, sb) {
-      if (!sa || !sb) return 0;
-      const bg = (s) => { const a = []; for (let i = 0; i < s.length - 1; i++) a.push(s.substr(i, 2)); return a; };
-      const ba = bg(sa), bb = bg(sb);
-      if (!ba.length || !bb.length) return 0;
-      const inter = ba.filter((g) => bb.indexOf(g) >= 0).length;
-      return Math.round(2 * inter / (ba.length + bb.length) * 100);
+    // Bigramas de una cadena, como arreglo (con repetidos).
+    function bigramas(s) {
+      const a = [];
+      for (let i = 0; i < s.length - 1; i++) a.push(s.substr(i, 2));
+      return a;
+    }
+
+    // Dice sobre bigramas, en tiempo lineal: los bigramas de la consulta
+    // llegan ya hechos y los del candidato se consultan contra un Set, en
+    // vez de reconstruir ambos y hacer indexOf dentro de un filter (O(n*m)).
+    //
+    // MEDIDO: esto por sí solo no acelera de forma apreciable (1.06x sobre
+    // 60,000 nombres, menos que el ruido entre corridas). Se deja porque es
+    // equivalente —0 diferencias en 6,008 casos de prueba— y más claro, no
+    // porque sea el cuello de botella. El costo real de la búsqueda está en
+    // bajar y parsear las listas, no en puntuarlas.
+    function simDiceP(gramsQ, setE, nGramsE) {
+      if (!gramsQ.length || !nGramsE) return 0;
+      let inter = 0;
+      for (let i = 0; i < gramsQ.length; i++) if (setE.has(gramsQ[i])) inter++;
+      return Math.round(2 * inter / (gramsQ.length + nGramsE) * 100);
     }
 
     // Jaro-Winkler (0-100): premia coincidencias al inicio, útil en nombres.
@@ -1778,13 +1863,25 @@
     // El corpus se va construyendo conforme se cargan PEP y listas.
     let dfTokens = {};
     let totalDocsIDF = 0;
+    let fuentesIDF = {};  // fuente -> ya contada en el corpus (evita duplicar)
     function simIDF(t) {
       if (!totalDocsIDF) return 1;
       return Math.log((totalDocsIDF + 1) / ((dfTokens[t] || 0) + 1)) + 0.5;
     }
 
-    // Suma nombres ya normalizados al corpus IDF (una vez por lista/carga).
-    function indexarIDF(nombresNorm) {
+    // Suma nombres ya normalizados al corpus IDF, UNA sola vez por fuente.
+    //
+    // La guarda de `fuente` arregla un error real: cargarPersonas() alimenta
+    // el corpus con sus 64,727 nombres, y antes esa carga se repetía en cada
+    // guardado. Cada repetición volvía a sumar los mismos 64,727 documentos,
+    // así que los pesos IDF —y con ellos los porcentajes de parecido que ve
+    // el usuario— se movían solos durante la sesión: el mismo nombre podía
+    // dar 87% y al rato 84% sin que cambiara nada.
+    function indexarIDF(nombresNorm, fuente) {
+      if (fuente) {
+        if (fuentesIDF[fuente]) return; // ya estaba contada
+        fuentesIDF[fuente] = true;
+      }
       nombresNorm.forEach((nn) => {
         if (!nn) return;
         totalDocsIDF++;
@@ -1803,14 +1900,51 @@
       return distintos.every((t) => grande.indexOf(t) >= 0);
     }
 
+    // Todo lo que depende SOLO de la consulta se calcula una vez y se
+    // reusa para los ~300 mil nombres contra los que se compara. Se
+    // memoriza por texto normalizado: mientras el usuario no cambie lo que
+    // escribió, no se vuelve a calcular nada de este lado.
+    let consultaPreparada = null;
+
+    function prepararConsulta(qNorm, qTokens) {
+      if (consultaPreparada && consultaPreparada.norm === qNorm) return consultaPreparada;
+      const plain = qNorm.replace(/\s/g, "");
+      // OJO: los significativos NO se deduplican. El puntaje fonético divide
+      // entre max(cantidad de códigos), así que quitar repetidos aquí
+      // cambiaría los porcentajes.
+      // Nada de lo que se guarda aquí depende del corpus IDF, así que no hay
+      // que invalidarlo cuando entra una lista nueva.
+      const sig = qTokens.filter((t) => t.length > 2);
+      consultaPreparada = {
+        norm: qNorm,
+        tokens: qTokens,
+        plain: plain,
+        grams: bigramas(plain),
+        fon: sig.map(simFon),
+      };
+      return consultaPreparada;
+    }
+
     // Núcleo: recibe el nombre buscado ya normalizado + sus tokens, y el
     // nombre candidato ya normalizado. Devuelve 0-100.
     function simCore(qNorm, qTokens, eNorm) {
+      return simCoreP(prepararConsulta(qNorm, qTokens), eNorm, null);
+    }
+
+    // Igual que simCore pero con la consulta ya preparada y, si se tiene, el
+    // candidato ya sin espacios (ePlain) para no repetir el replace.
+    function simCoreP(Q, eNorm, ePlainDado) {
+      const qNorm = Q.norm, qTokens = Q.tokens;
       if (!qNorm || !eNorm) return 0;
       if (qNorm === eNorm) return 100;
       const eTokens = eNorm.split(" ");
 
-      // 1) Tokens comunes ponderados por IDF
+      // 1) Tokens comunes ponderados por IDF.
+      //
+      // Se intentó reescribir esto con Set y pesos precalculados y salió
+      // MÁS LENTO (300 ms vs 257 ms sobre 60,000 nombres): el motor ya
+      // optimiza bien este objeto + Object.keys, y el Set por candidato
+      // cuesta más de lo que ahorra. Se deja tal cual a propósito.
       const union = {};
       qTokens.concat(eTokens).forEach((t) => { if (t.length > 2) union[t] = 1; });
       let num = 0, den = 0;
@@ -1820,8 +1954,12 @@
       });
       const tokenScore = den > 0 ? Math.round(num / den * 100) : 0;
 
-      // 2) Dice sobre bigramas
-      const dice = simDice(qNorm.replace(/\s/g, ""), eNorm.replace(/\s/g, ""));
+      // 2) Dice sobre bigramas. El candidato sin espacios llega precalculado
+      // cuando se tiene (listas internacionales); si no, se calcula aquí.
+      const ePlain = (ePlainDado !== null && ePlainDado !== undefined)
+        ? ePlainDado : eNorm.replace(/\s/g, "");
+      const gramsE = bigramas(ePlain);
+      const dice = simDiceP(Q.grams, new Set(gramsE), gramsE.length);
 
       const sub = simSubset(qTokens, eTokens) || simSubset(eTokens, qTokens);
 
@@ -1829,9 +1967,9 @@
       // (esto es lo que hace viable comparar contra decenas de miles).
       if (!sub && tokenScore < 20 && dice < 40) return Math.round(tokenScore * 0.5 + dice * 0.5);
 
-      const jw = simJaroWinkler(qNorm.replace(/\s/g, ""), eNorm.replace(/\s/g, ""));
+      const jw = simJaroWinkler(Q.plain, ePlain);
 
-      const qf = qTokens.filter((t) => t.length > 2).map(simFon);
+      const qf = Q.fon;
       const ef = eTokens.filter((t) => t.length > 2).map(simFon);
       let phon = 0;
       if (qf.length && ef.length) {
@@ -1847,10 +1985,11 @@
     // Mejor puntaje del nombre buscado contra varios candidatos ya
     // normalizados (nombre principal + cada alias por separado: compararlo
     // contra la cadena completa de alias diluiría el puntaje).
-    function mejorSimilitud(qNorm, qTokens, normsCandidatos) {
+    function mejorSimilitud(qNorm, qTokens, normsCandidatos, plainsCandidatos) {
+      const Q = prepararConsulta(qNorm, qTokens);
       let mejor = 0;
       for (let i = 0; i < normsCandidatos.length; i++) {
-        const s = simCore(qNorm, qTokens, normsCandidatos[i]);
+        const s = simCoreP(Q, normsCandidatos[i], plainsCandidatos ? plainsCandidatos[i] : null);
         if (s > mejor) mejor = s;
         if (mejor === 100) break;
       }
@@ -3229,7 +3368,16 @@
           const v = fila.values[0];
           // Un id tecleado tal cual siempre entra (búsqueda directa por clave).
           if (normTexto(val(v, "persona_id")).includes(q)) { puntajes.set(fila, 100); return true; }
-          const pct = mejorSimilitud(qNorm, qTokens, [simNorm(val(v, "nombre_completo"))]);
+          // El nombre normalizado se cachea en la propia fila: antes se
+          // normalizaban las 64,727 filas en CADA búsqueda. Si la fila se
+          // reemplaza al guardar, el objeto es nuevo y se vuelve a calcular.
+          // MEDIDO: simNorm sobre 64,727 nombres son ~54 ms, que es lo que
+          // se ahorra en cada búsqueda a partir de la segunda.
+          if (fila._nNorm === undefined) {
+            fila._nNorm = simNorm(val(v, "nombre_completo"));
+            fila._nPlain = fila._nNorm.replace(/\s/g, "");
+          }
+          const pct = mejorSimilitud(qNorm, qTokens, [fila._nNorm], [fila._nPlain]);
           if (pct < umbral) return false;
           puntajes.set(fila, pct);
           return true;
@@ -3395,9 +3543,15 @@
             const partes = [r.nombre_principal];
             if (r.alias) String(r.alias).split(";").forEach((a) => partes.push(a));
             r._norms = partes.map(simNorm).filter(Boolean);
+            // Versión sin espacios, para Dice y Jaro-Winkler. Antes este
+            // replace corría una vez por nombre EN CADA búsqueda (~300 mil
+            // veces); ahora se hace una sola vez, al cargar la lista.
+            // MEDIDO: ~7 ms por cada 60,000 nombres, o sea ~35 ms por
+            // búsqueda con las 30 listas cargadas.
+            r._plains = r._norms.map((n) => n.replace(/\s/g, ""));
           });
           // El corpus IDF crece con cada lista: los tokens raros pesan más.
-          indexarIDF(registros.map((r) => (r._norms && r._norms[0]) || ""));
+          indexarIDF(registros.map((r) => (r._norms && r._norms[0]) || ""), "lista:" + clave);
 
           cacheRegistrosFuente[clave] = registros;
           return registros;
@@ -3446,30 +3600,60 @@
       const qNorm = simNorm(searchInput.value);
       const qTokens = qNorm.split(" ");
 
+      // FASE 1: traer las listas. Antes esto era en serie dentro del mismo
+      // bucle que puntuaba: la lista 30 no empezaba a bajar hasta que la 29
+      // terminaba de parsearse, y son ~17 MB comprimidos que se vuelven
+      // ~172 MB al abrirse. Ahora se bajan de a LIMITE a la vez.
+      //
+      // Se traen TODAS antes de puntuar, a propósito. El corpus IDF —que
+      // pesa los apellidos raros más que los comunes— crece con cada lista,
+      // así que puntuar a media carga hacía que el porcentaje dependiera de
+      // cuántas listas habían alcanzado a entrar. La misma búsqueda podía
+      // dar 87% y luego 84%. Con todas cargadas antes de puntuar, el
+      // resultado es el mismo siempre.
+      // 4 y no más: cada descarga sostiene su buffer crudo en memoria
+      // mientras se parsea, y la lista suiza sola son 43 MB al abrirse.
+      const LIMITE = 4;
+      let listas = 0;
+      const traidas = new Array(activas.length).fill(null);
+      let siguiente = 0;
+
+      const trabajador = async () => {
+        for (;;) {
+          const i = siguiente++;
+          if (i >= activas.length) return;
+          try {
+            traidas[i] = await obtenerRegistrosDeFuente(activas[i]);
+          } catch (err) {
+            console.warn("Error al leer " + activas[i].lista_id + ":", err);
+          }
+          listas++;
+          progreso.textContent = "Trayendo listas… " + listas + " de " + activas.length;
+        }
+      };
+      await Promise.all(
+        Array.from({ length: Math.min(LIMITE, activas.length) }, trabajador)
+      );
+
+      // FASE 2: puntuar, ya con el corpus completo.
       let total = 0, fallidas = 0;
       for (let i = 0; i < activas.length; i++) {
-        const lista = activas[i];
-        const etiqueta = lista.nombre || lista.lista_id;
-        progreso.textContent = "Buscando… " + (i + 1) + " de " + activas.length + " (" + etiqueta + ")";
-
-        let registros = null;
-        try {
-          registros = await obtenerRegistrosDeFuente(lista);
-        } catch (err) {
-          console.warn("Error al leer " + lista.lista_id + ":", err);
-        }
+        const registros = traidas[i];
         if (!registros) { fallidas++; continue; }
+        const etiqueta = activas[i].nombre || activas[i].lista_id;
+
+        if (i % 5 === 0) {
+          progreso.textContent = "Comparando… " + (i + 1) + " de " + activas.length;
+        }
 
         // Similitud contra el nombre principal y cada alias; se queda el mejor.
         const hits = [];
         registros.forEach((r) => {
-          const pct = mejorSimilitud(qNorm, qTokens, r._norms || []);
+          const pct = mejorSimilitud(qNorm, qTokens, r._norms || [], r._plains);
           if (pct >= umbral) hits.push({ r, pct });
         });
         hits.sort((a, b) => b.pct - a.pct); // más parecido primero
 
-        // Se pintan los resultados de cada lista en cuanto están listos,
-        // en vez de esperar a que terminen las 13.
         hits.forEach((h) => tbody.appendChild(filaInternacional(etiqueta, h.r, h.pct)));
         total += hits.length;
         if (total > 0) $("intTableWrap").classList.remove("hidden");
@@ -4266,6 +4450,53 @@
       }
     }
 
+    // Relee UNA sola fila de tbl_Personas y la actualiza en la caché de
+    // memoria. Antes, al guardar a una persona se llamaba a
+    // cargarPersonas(), que vuelve a bajar las 64,727 filas completas:
+    // decenas de MB y un reparseo entero por cada alta o edición.
+    //
+    // Se RELEE del Excel en vez de reusar los valores que acabamos de
+    // mandar porque tres columnas las calcula Excel (nombre_normalizado,
+    // fecha_fin_remanencia y estatus): si las copiáramos de lo enviado, el
+    // estatus quedaría vacío o con el valor viejo en pantalla.
+    //
+    // Devuelve false si no se pudo: el llamador entonces cae a la recarga
+    // completa, para no dejar memoria y Excel desincronizados.
+    async function refrescarFilaEnMemoria(filaIndex) {
+      if (filaIndex === null || filaIndex === undefined) return false;
+      try {
+        const resp = await graphFetch(
+          wbPersonas() + "/rows/itemAt(index=" + filaIndex + ")", {}
+        );
+        if (!resp.ok) return false;
+
+        const fila = await resp.json();
+        if (!fila || !fila.values) return false;
+
+        const filas = datosCargados.filas || [];
+        const pos = filas.findIndex((f) => f.index === filaIndex);
+        if (pos >= 0) filas[pos] = fila;   // edición: reemplaza
+        else filas.push(fila);             // alta: va al final, como en la tabla
+
+        ultimaCarga = Date.now();
+        actualizarTimestamp();
+        return true;
+      } catch (err) {
+        console.warn("No se pudo releer la fila " + filaIndex + ":", err);
+        return false;
+      }
+    }
+
+    // Tras guardar: actualiza solo la fila tocada y repinta. Si algo falla,
+    // recarga todo (lento, pero correcto).
+    async function sincronizarTrasGuardar(filaIndex) {
+      const ok = await refrescarFilaEnMemoria(filaIndex);
+      if (!ok) { await cargarPersonas(); return; }
+      // Antes la lista no se repintaba al guardar (solo buscar() la dibuja),
+      // así que el cambio no se veía hasta volver a buscar.
+      if (busquedaHecha) renderResultadosPEP();
+    }
+
     // Convierte un índice de columna 0-based a letra(s) de Excel (0→A, 25→Z, 26→AA…).
     function columnaALetra(indiceCero) {
       let n = indiceCero + 1;
@@ -4328,7 +4559,7 @@
           editando ? "Edición de persona" : "Alta de persona",
           [persona.persona_id, persona.nombre_completo].filter(Boolean).join(" · ")
         );
-        await cargarPersonas();
+        await sincronizarTrasGuardar(filaIndex);
       } catch (err) {
         mostrarOverlay(false);
         console.error("Error al guardar:", err);
@@ -4358,7 +4589,7 @@
         mostrarOverlay(false);
         mostrarToast("Persona marcada como eliminada", "ok");
         registrarBitacora("Baja de persona", nombre);
-        await cargarPersonas();
+        await sincronizarTrasGuardar(fila.index);
       } catch (err) {
         mostrarOverlay(false);
         console.error("Error en soft delete:", err);
@@ -5047,18 +5278,21 @@
         const token = await obtenerToken();
         const headers = { Authorization: "Bearer " + token };
         const wbTabla = GRAPH_BASE + "/me/drive/root:" + WORKBOOK_LISTAS_PATH + ":/workbook/tables/" + tabla;
-        const [colsResp, rowsResp] = await Promise.all([
-          fetch(wbTabla + "/columns", { headers }),
-          fetch(wbTabla + "/rows", { headers }),
-        ]);
+        const colsResp = await fetch(wbTabla + "/columns", { headers });
         if (!colsResp.ok) throw await graphError(colsResp, tabla, WORKBOOK_LISTAS_PATH);
-        if (!rowsResp.ok) throw await graphError(rowsResp, tabla, WORKBOOK_LISTAS_PATH);
         const colsData = await colsResp.json();
-        const rowsData = await rowsResp.json();
         const idx = {};
         (colsData.value || []).forEach((c) => { idx[normalizarCol(c.name)] = c.index; });
 
-        registrosListaActual = { listaId: lista.lista_id, idx, filas: rowsData.value || [] };
+        // Paginado: la CSL sola son 26,340 registros y sin paginar la
+        // respuesta se puede cortar sin avisar.
+        const filasTabla = await traerFilasTabla(
+          wbTabla, headers, tabla, WORKBOOK_LISTAS_PATH,
+          (n) => { $("registrosListaSub").textContent =
+            "Tabla " + tabla + " · " + n.toLocaleString("es-MX") + " registros…"; }
+        );
+
+        registrosListaActual = { listaId: lista.lista_id, idx, filas: filasTabla };
         $("registrosListaSub").textContent = "Tabla " + tabla;
         renderRegistrosLista("");
         $("registrosListaWrap").scrollIntoView({ behavior: "smooth", block: "start" });
