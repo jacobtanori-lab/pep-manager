@@ -43,11 +43,29 @@ Archivo: `/Apps/PEP-Manager/listas_internacionales.xlsx`
 
 | Tabla           | Descripción                                                        |
 |-----------------|---------------------------------------------------------------------|
-| `CAT_Listas`    | Configuración: una fila por lista (URL de la fuente, tabla destino, si está activa, última actualización) |
-| `tbl_OFAC_SDN`  | Registros importados de la lista SDN de OFAC (Tesoro de EE. UU.)     |
+| `CAT_Listas`    | Configuración: una fila por lista (URL de la fuente, formato, tabla destino, si está activa, última actualización, total de registros) |
+| `tbl_<ID>`      | Una tabla destino por lista, con el mismo esquema de 13 columnas (`COLUMNAS_LISTA`) |
 
-Cada lista nueva (ONU, UE, ...) agrega una fila en `CAT_Listas` + su propia tabla
-`tbl_*` destino + un adaptador de formato en el código (`ADAPTADORES_LISTAS`).
+Al 26-nov-2026 hay **30 listas** configuradas, de sanciones (OFAC SDN y Consolidated,
+ONU, UE, Reino Unido, Suiza, Francia, Canadá, Australia, FinCEN 311, los cinco bancos
+multilaterales de desarrollo…), criminales (Interpol, FBI, DEA, US Marshals…),
+terrorismo y fiscales (SAT 69-B, SFP). Cada lista nueva agrega una fila en
+`CAT_Listas` + su propia tabla `tbl_*` + una entrada en `ADAPTADORES_LISTAS` en el
+código; si el formato ya está soportado (p. ej. el CSV "simple" de OpenSanctions),
+basta la entrada y **no hace falta código nuevo**.
+
+#### Dos carriles según la licencia de la fuente
+
+| Carril | Cómo se obtiene | Cuándo se usa |
+|--------|-----------------|---------------|
+| **Espejo** | Un GitHub Action baja la fuente y la commitea comprimida en `data/<ID>.<fmt>.gz`; la app la lee del mismo origen, así que **no hay CORS** | Fuentes de dominio público o con licencia abierta. Las fuentes a espejar se declaran en `sanctions-sources.json` |
+| **En vivo** | La app descarga la fuente directo desde el navegador | Fuentes que **no se pueden redistribuir** (OpenSanctions es CC-BY-NC; los términos del AfDB reservan el copyright) y que sí mandan CORS |
+
+Una fuente que ni permite espejo ni manda CORS no sirve por ninguno de los dos
+carriles: es la razón de que ADB y EBRD se lean vía OpenSanctions y no de su banco.
+
+El orden de descarga al actualizar es: espejo comprimido → espejo plano → fuente
+original → y si todo falla, subida manual del archivo.
 
 **Los nombres de tabla y de columna deben coincidir exactamente** con lo que espera
 el código (aunque no importan mayúsculas/acentos en las columnas de este módulo,
@@ -113,7 +131,8 @@ No hay build tools: es HTML + JS plano. **No se requiere `npm install`.**
 
 ## Estado actual
 
-La app se organiza en tres pestañas: **Personas**, **Catálogos** y **Listas**.
+La app se organiza en cinco pestañas: **Personas**, **Catálogos**, **Listas**,
+**Fotos** y **Bitácora**.
 
 ### Autenticación
 - Landing con login **"Iniciar sesión con Microsoft"** (popup MSAL, con fallback a interacción).
@@ -134,9 +153,22 @@ La app se organiza en tres pestañas: **Personas**, **Catálogos** y **Listas**.
 
 ### Listas Internacionales
 - Configuración vía `CAT_Listas` con una card por lista.
-- Adaptador **OFAC SDN**: parser XML, fetch desde la fuente + respaldo por subida
-  manual del archivo, escritura por bloques a la tabla destino y visor de registros
-  con filtro.
+- **30 listas** configuradas, con **29 entradas** en `ADAPTADORES_LISTAS` resueltas por
+  **21 adaptadores** distintos (varias listas comparten uno: siete usan el CSV "simple"
+  de OpenSanctions y tres el de organizaciones terroristas). La lista restante
+  (`AM_LPB`, señales de adverse media de la LPB de la UIF) es de **curación manual** y
+  por eso no lleva adaptador ni URL.
+- Formatos cubiertos: XML, CSV y JSON, más fuentes que exigen armarse aparte (un XLSX
+  que el Action convierte a JSON, y algunos scrapes publicados como espejo estático).
+- Descarga con reintento entre candidatos (espejo comprimido, espejo plano, fuente
+  original) + respaldo por **subida manual** del archivo; escritura por bloques de 500
+  filas a la tabla destino y visor de registros con filtro.
+- Buscador de coincidencias que lee los espejos **directo en el navegador**, sin pasar
+  por Excel, con ponderación por IDF y caché entre sesiones.
+- Las listas que conservan historial (Suiza, AfDB, CSL, SAT 69-B) marcan lo que ya no
+  está vigente con `estatus` **"Histórico"** *y* un aviso al inicio de
+  `programa_motivo`, porque `estatus` no es una de las columnas que el buscador
+  muestra.
 - Tolerancia a mayúsculas/acentos en columnas y diagnóstico de la tabla real al
   fallar con 404.
 
@@ -145,5 +177,12 @@ La app se organiza en tres pestañas: **Personas**, **Catálogos** y **Listas**.
 - **Dashboard** (conteos por estatus, vencimientos de remanencia, etc.).
 - Joins legibles por nombre en catálogos y filtros avanzados (entidad federativa,
   tipo PEP).
-- Más adaptadores de listas (**ONU, UE**): la arquitectura ya lo soporta; por ahora
-  solo OFAC SDN está codificado.
+- Más listas: CNBV/CONDUSEF, proveedores sancionados de la SABG y PEPs
+  internacionales masivos. **SAT art. 69** quedó investigado y aplazado: sus cinco
+  padrones "core" suman 508,239 filas y no caben en la arquitectura actual, porque el
+  buscador cachea cada lista completa en el navegador y Excel se escribe de 500 en 500.
+- Familiares y asociados de PEPs: el modelo ya existe (`tipo_pep` +
+  `persona_id_relacionado`), falta poblarlo; las fuentes medidas hasta ahora dan muy
+  pocos vínculos.
+- Cobertura de fotografías: ampliar el repositorio de retratos con procedencia y
+  licencia verificable (hoy cubre una fracción pequeña de la base).
