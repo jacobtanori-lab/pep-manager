@@ -996,11 +996,15 @@
       NCA: parseNCA,                       // UK National Crime Agency - Most Wanted (~21; se baja por PowerShell; Open Government Licence v3.0)
       // Bancos multilaterales de desarrollo. Por el acuerdo de
       // inhabilitación cruzada (BM/BID/AfDB/ADB/EBRD se reconocen las
-      // sanciones entre sí), una misma empresa puede aparecer en ambas
-      // de varias a la vez: es correcto, no es duplicado a corregir.
+      // sanciones entre sí), una misma empresa puede aparecer en varias a
+      // la vez: es correcto, no es duplicado a corregir.
       BM: parseOpenSanctionsSimple,        // World Bank Debarred (~1,425)
       BID: parseOpenSanctionsSimple,       // BID / IADB Sanctioned (~1,236)
-      AFDB: parseOpenSanctionsSimple,      // Banco Africano de Desarrollo, inhabilitados (~1,388; el unico de los cinco con personas fisicas: 242)
+      // El AfDB es el único de los cinco que se lee de su PROPIA fuente: su
+      // página de debarment publica un feed JSON con CORS abierto, con 1,438
+      // sujetos (50 más que OpenSanctions) y con las fechas de vigencia que
+      // OpenSanctions no desglosa. Ver parseAFDB.
+      AFDB: parseAFDB,                     // Banco Africano de Desarrollo, inhabilitados (1,438; el unico de los cinco con personas fisicas: 244)
       ADB: parseOpenSanctionsSimple,       // Banco Asiatico de Desarrollo, sancionados (~1,454)
       EBRD: parseOpenSanctionsSimple,      // BERD / EBRD, entidades inelegibles (~1,235)
       // FinCEN (Tesoro de EE. UU.), medidas especiales de las secciones 311
@@ -6046,6 +6050,216 @@
       return registros;
     }
 
+
+    // ---- Adaptador: inhabilitados del Banco Africano de Desarrollo (AfDB) ----
+    // Fuente OFICIAL DEL BANCO, no de un agregador. Su página de debarment
+    // publica la lista completa en tres formatos y el servidor responde con
+    // "Access-Control-Allow-Origin: *", así que el navegador la lee DIRECTO,
+    // sin espejo y sin proxy:
+    //   https://www.afdb.org/en/debarred-entities-json-feed   (JSON, ~276 KB)
+    //   https://www.afdb.org/en/debarred-entities-csv-export  (CSV,  ~180 KB)
+    // OJO: el "XML Export" de esa misma página obedece al paginador del sitio
+    // y devuelve SOLO los 10 primeros registros. No sirve; de ahí el JSON.
+    //
+    // POR QUÉ NO SE ESPEJA: los Términos y Condiciones del AfDB reservan el
+    // copyright ("All Materials that appear on the Site are the exclusive
+    // property of AfDB"), alientan la copia personal y no comercial, y exigen
+    // consentimiento escrito para redistribuir. Leer el feed en vivo es uso
+    // normal de la fuente; publicar una copia en data/ sería redistribuirla.
+    // Por eso esta lista NO entra a sanctions-sources.json: mismo carril que
+    // OpenSanctions, pero consultando al banco directamente.
+    //
+    // POR QUÉ SUSTITUYÓ AL CARRIL DE OPENSANCTIONS: el feed oficial trae
+    // 1,438 sujetos contra 1,388 del dataset afdb_sanctions, y sobre todo
+    // trae las FECHAS de inicio y término de cada inhabilitación, que es lo
+    // único que permite saber si sigue vigente.
+    //
+    // Siete campos planos por registro y NINGÚN identificador propio:
+    //   Type (FIRM 1,194 / INDIVIDUAL 244), Name, Nationality, From, To,
+    //   Basis, Notes.
+    //
+    // TRES TRAMPAS DE ESTE FEED, las tres medidas contra el archivo real:
+    //
+    // 1) CONSERVA EL HISTORIAL Y "Notes" MIENTE. 465 de las 1,438 ya
+    //    vencieron (su To es anterior a hoy) y buena parte de ellas sigue
+    //    diciendo Notes = "ONGOING": ese campo NO es un estatus. La vigencia
+    //    se calcula con To, y lo vencido se marca en programa_motivo, que sí
+    //    es una de las seis columnas que el buscador muestra.
+    //
+    // 2) VIENE CON ENTIDADES HTML SIN DECODIFICAR, porque lo genera Drupal:
+    //    &amp; (49 casos), &quot; (32) y &#039; (21). Sin decodificarlas,
+    //    "LLC UN &amp; CO" se guardaría así y el buscador difuso compararía
+    //    contra basura. El resto del texto sí viene bien: usa escapes \uXXXX
+    //    para el chino y los acentos, con cero caracteres de reemplazo.
+    //
+    // 3) LOS ALIAS VAN DENTRO DEL NOMBRE, entre paréntesis: "Maurence Anguh
+    //    (also known as Mr. Anguh)". Se separan al campo alias, pero SOLO
+    //    cuando el paréntesis abre con un marcador de alias: de los 309
+    //    nombres con paréntesis, 112 llevan ahí parte del nombre legal
+    //    (sucursales, "(Hong Kong)", un CNPJ, el nombre en chino), y
+    //    recortarlos todos mutilaría el nombre.
+    //
+    // ALCANCE: solo 120 de las 1,438 son sanciones PROPIAS del AfDB
+    // (Basis = "DEBARMENT:AFDB"). Las otras 1,318 son inhabilitaciones
+    // cruzadas que el AfDB reconoce del BM (652), ADB (376), BID (163) y
+    // EBRD (127) bajo el acuerdo de 2010, así que se traslapan A PROPÓSITO
+    // con tbl_BM, tbl_ADB, tbl_BID y tbl_EBRD: no es duplicado a corregir.
+    function parseAFDB(textoCrudo) {
+      let datos;
+      try {
+        datos = JSON.parse(textoCrudo);
+      } catch (err) {
+        throw new Error("El feed del AfDB no es JSON válido: " + err.message);
+      }
+      if (!Array.isArray(datos) || !datos.length) {
+        throw new Error("El feed del AfDB no vino como un arreglo con registros. ¿Cambió el formato?");
+      }
+      if (datos[0].Name === undefined || datos[0].Type === undefined) {
+        throw new Error("El feed del AfDB no trae los campos esperados (Name, Type). ¿Cambió el formato?");
+      }
+
+      const unicos = (arr) => arr.filter((v, i) => v && arr.indexOf(v) === i);
+
+      // Decodificador de entidades HTML (trampa 2). Se hace con una tabla
+      // explícita más las numéricas, NO asignando innerHTML a un elemento:
+      // esto es texto de una fuente externa y el proyecto no lo pasa por el
+      // parser de HTML. Las numéricas van primero para que un "&amp;#39;"
+      // doblemente escapado no se convierta en comilla por accidente.
+      const NOMBRADAS = {
+        amp: "&", quot: "\"", apos: "'", lt: "<", gt: ">", nbsp: " ",
+        laquo: "«", raquo: "»", ldquo: "“", rdquo: "”",
+        lsquo: "‘", rsquo: "’", ndash: "–", mdash: "—",
+        hellip: "…",
+      };
+      const porCodigo = (texto, base, original) => {
+        const n = parseInt(texto, base);
+        if (isNaN(n) || n < 1 || n > 0x10ffff) return original;
+        try { return String.fromCodePoint(n); } catch (_) { return original; }
+      };
+      const desHTML = (s) => String(s === undefined || s === null ? "" : s)
+        .replace(/&#x([0-9a-f]+);/gi, (m, h) => porCodigo(h, 16, m))
+        .replace(/&#(\d+);/g, (m, d) => porCodigo(d, 10, m))
+        .replace(/&([a-z]+);/gi, (m, n) => {
+          const v = NOMBRADAS[n.toLowerCase()];
+          return v === undefined ? m : v;
+        })
+        .replace(/\s+/g, " ")
+        .trim();
+
+      // Marcadores con los que el AfDB introduce un alias dentro del nombre
+      // (trampa 3). Ordenados del más largo al más corto porque "also known
+      // as" tiene que ganarle a "also". Conteos del feed real: "also known
+      // as" 185, "formerly known as" 6, "formerly operating as" 2,
+      // "previously known as" 1, "also doing business as" 1, "also" suelto 1.
+      const MARCAS_ALIAS = [
+        "also known as", "formerly known as", "previously known as",
+        "formerly operating as", "also doing business as", "also trading as",
+        "doing business as", "trading as", "a.k.a.", "aka", "also",
+      ];
+
+      // Separa del nombre los paréntesis que son alias y deja el nombre legal
+      // limpio. Los paréntesis que no abren con un marcador se dejan tal cual.
+      const partirAlias = (nombre) => {
+        const alias = [];
+        let limpio = nombre;
+        const grupos = [];
+        const re = /\(([^()]*)\)/g;
+        let m;
+        while ((m = re.exec(nombre)) !== null) grupos.push(m);
+        // Se recorren de derecha a izquierda para que, al ir recortando, los
+        // índices de los paréntesis que quedan a la izquierda sigan siendo
+        // válidos sobre la cadena que se está modificando.
+        for (let i = grupos.length - 1; i >= 0; i--) {
+          const g = grupos[i];
+          const dentro = g[1].trim();
+          const bajo = dentro.toLowerCase();
+          const marca = MARCAS_ALIAS.find((k) => bajo.indexOf(k) === 0);
+          if (!marca) continue;
+          // Un mismo paréntesis puede traer dos alias separados por " or ".
+          const delGrupo = [];
+          dentro.slice(marca.length).split(/\s+or\s+/i).forEach((a) => {
+            const v = a.replace(/^[\s:,.–—-]+/, "").trim();
+            if (v) delGrupo.push(v);
+          });
+          // unshift (y no push) porque los paréntesis se recorren de derecha
+          // a izquierda: así los alias quedan en el orden del nombre.
+          alias.unshift.apply(alias, delGrupo);
+          limpio = limpio.slice(0, g.index) + limpio.slice(g.index + g[0].length);
+        }
+        limpio = limpio.replace(/\s+/g, " ").replace(/[\s,;]+$/, "").trim();
+        // Si el nombre era SOLO el paréntesis, se conserva el original: más
+        // vale un nombre con ruido que un registro sin nombre.
+        return { nombre: limpio || nombre, alias: alias };
+      };
+
+      const hoy = hoyISO();
+      const registros = [];
+      datos.forEach((it, n) => {
+        const crudo = desHTML(it.Name);
+        if (!crudo) return;
+        const partido = partirAlias(crudo);
+        const tipo = desHTML(it.Type).toUpperCase();
+        const desde = desHTML(it.From);
+        const hasta = desHTML(it.To);
+        const base = desHTML(it.Basis);
+        const notaFuente = desHTML(it.Notes);
+        // Vigencia (trampa 1): sin To la inhabilitación es indefinida; con To
+        // basta comparar como texto, que en fechas ISO yyyy-mm-dd equivale a
+        // comparar fechas y evita husos horarios.
+        const vencida = !!hasta && hasta < hoy;
+        const periodo = desde
+          ? desde + (hasta ? " a " + hasta : " (sin fecha de término)")
+          : (hasta ? "hasta " + hasta : "");
+        const origenCruzado = base.replace(/^CROSS[\s-]*DEBARMENT\s*:\s*/i, "").trim();
+        registros.push({
+          // El feed no trae identificador propio y el nombre no es único (hay
+          // dos nombres repetidos, y Name+From+Basis solo da 1,436 claves de
+          // 1,438), así que el id es posicional, como en CA_SEMA y DFAT. No
+          // importa que se corra entre actualizaciones: la tabla se reescribe
+          // completa en cada carga.
+          registro_id: "AFDB-" + String(n + 1).padStart(5, "0"),
+          lista_origen: "AFDB",
+          tipo_sujeto: tipo === "INDIVIDUAL" ? "Persona" : (tipo === "FIRM" ? "Entidad" : "Desconocido"),
+          nombre_principal: partido.nombre,
+          alias: unicos(partido.alias).join("; "),
+          nacionalidad: desHTML(it.Nationality),
+          // El AfDB no publica fecha de nacimiento de los inhabilitados.
+          fecha_nacimiento: "",
+          id_original: "",
+          // El aviso de vencimiento va AQUÍ además de en estatus porque esta
+          // es una de las seis columnas que el buscador sí muestra. Dice
+          // "VENCIDO" y no "HISTÓRICO" a propósito: en esta columna lo que el
+          // analista necesita leer es la RAZÓN, y abajo queda la fecha exacta.
+          programa_motivo: (vencida ? "VENCIDO · " : "") + [base, periodo].filter(Boolean).join(" · "),
+          // El feed no trae fecha de la lista, solo la de cada medida; se usa
+          // la de inicio de la inhabilitación.
+          fecha_fuente: desde,
+          // "Histórico" es el valor canónico del proyecto para una medida cuya
+          // vigencia ya terminó (igual que en la CSL y el 69-B) y el único que
+          // claseEstatus() sabe pintar.
+          estatus: vencida ? "Histórico" : "Activo",
+          notas: [
+            vencida
+              ? "INHABILITACIÓN VENCIDA el " + hasta + ": ya NO está inhabilitado por el AfDB; se conserva como antecedente."
+              : "",
+            !hasta ? "Sin fecha de término: inhabilitación indefinida." : "",
+            base === "DEBARMENT:AFDB"
+              ? "Sanción propia del AfDB."
+              : (origenCruzado
+                ? "Inhabilitación cruzada que el AfDB reconoce; el origen es " + origenCruzado + "."
+                : ""),
+            // Se arrastra tal cual, pero ver la trampa 1: dice "ONGOING"
+            // incluso en medidas ya vencidas, así que no es un estatus.
+            notaFuente ? "Notes de la fuente: " + notaFuente : "",
+          ].filter(Boolean).join(" | "),
+        });
+      });
+
+      if (!registros.length) {
+        throw new Error("El feed del AfDB se leyó pero no quedó ningún registro con nombre.");
+      }
+      return registros;
+    }
     // ---- Adaptador: lista de sanciones de Suiza (SECO) ----
     // Fuente oficial (SESAM / Secretaría de Estado de Economía), dominio
     // público del Gobierno suizo, se espeja en data/CH_SECO.xml.gz:
