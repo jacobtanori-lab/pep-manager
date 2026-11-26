@@ -67,15 +67,12 @@ jobs:
             pagina=$(jq -r ".[$i].url_pagina // empty" sanctions-sources.json)
             patron=$(jq -r ".[$i].url_patron // empty" sanctions-sources.json)
             # Fuentes grandes y lentas traen su propio max_time (CH_SECO son
-            # 43 MB en ~190 s). Sin esto curl corta a los 240 s por defecto y
-            # el archivo llega truncado: curl si lo detecta (error 18) y el
-            # paso conserva la copia previa, pero el espejo nunca avanzaria.
-            mt=$(jq -r ".[$i].max_time // empty" sanctions-sources.json)
-            [ -n "$mt" ] || mt=240
-            # Fuentes grandes y lentas (CH_SECO: 43 MB en ~190 s) traen su
-            # propio max_time; sin esto curl corta a los 240 s por defecto y
-            # el XML llega truncado (error 18), que si se detecta pero obliga
-            # a conservar la copia previa un dia tras otro.
+            # 43 MB que tardan ~190 s, con poco margen bajo los 240 s por
+            # defecto). Si curl corta, el archivo llega truncado: lo detecta
+            # (error 18) y el paso conserva la copia previa, asi que el
+            # espejo se congelaria un dia tras otro en vez de fallar fuerte.
+            # Ojo con subirlo mucho: cada reintento de --retry 3 trae su
+            # propio max_time, asi que una fuente colgada tarda 4 x $mt.
             mt=$(jq -r ".[$i].max_time // empty" sanctions-sources.json)
             [ -n "$mt" ] || mt=240
             case "$url" in
@@ -112,7 +109,7 @@ jobs:
             fi
 
             echo "Descargando $id -> data/$file.gz"
-            if curl -L --fail --silent --show-error --retry 3 --max-time 240 \
+            if curl -L --fail --silent --show-error --retry 3 --max-time "$mt" \
                  -A "$ua" -o "data/$file.tmp" "$url"; then
               if [ -s "data/$file.tmp" ]; then
                 gzip -9 -nc "data/$file.tmp" > "data/$file.gz"
