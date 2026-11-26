@@ -1893,12 +1893,52 @@
       });
     }
 
-    // ¿Todos los tokens significativos distintos de 'chico' están en 'grande'?
+    // ¿La palabra distingue a alguien? Una que aparece en buena parte del
+    // corpus (company, limited, bank, joint, stock) no distingue a nadie:
+    // está en miles de nombres. El corte es relativo al tamaño del corpus
+    // para que no dependa de cuántas listas estén cargadas.
+    const PROP_DISTINTIVO = 0.002; // está en 0.2% de los nombres o menos
+
+    function esDistintivo(t) {
+      if (!totalDocsIDF) return true; // sin corpus no hay con qué juzgar
+      return (dfTokens[t] || 0) <= totalDocsIDF * PROP_DISTINTIVO;
+    }
+
+    // ¿Todos los tokens significativos distintos de 'chico' están en 'grande',
+    // y al menos uno de ellos dice algo?
+    //
+    // Lo segundo arregla un error que inflaba los falsos positivos. Cuando
+    // esto da true, simCore fuerza el puntaje a 90 como mínimo. La regla se
+    // puso para personas, donde es correcta: "JUAN PEREZ" dentro de "JUAN
+    // PEREZ GARCIA" es la misma persona con el nombre corto.
+    //
+    // Pero con nombres de empresa el relleno corporativo ES todo el nombre
+    // del candidato, así que la regla se disparaba contra cualquier otra
+    // empresa:
+    //
+    //   "joint stock company black sea bank of development and reconstruction"
+    //        90%  contra  "joint stock company rn bank"   (otro banco)
+    //
+    // Las 4 palabras del candidato (joint, stock, company, bank) están en la
+    // consulta, así que era subconjunto, así que 90%.
+    //
+    // MEDIDO sobre la OFAC SDN real, con el corpus IDF cargado como en
+    // producción (109,097 nombres entre tbl_Personas y las listas): de 41
+    // coincidencias ≥70% en 16 consultas, se caen 10, y las 10 son de este
+    // tipo (90→50/55/56/64). Las 22 que comparten alguna palabra distintiva
+    // se conservan todas, y ningún puntaje sube.
+    //
+    // Exigir una palabra distintiva NO tumba el caso de personas, verificado:
+    // 400 nombres truncados y 508 nombres con errata siguen coincidiendo
+    // igual (0 regresiones), porque ahí el parecido de cadena ya sostiene el
+    // puntaje solo. En los pares de puro relleno era este empujón el que
+    // hacía todo el trabajo, y por eso se caen.
     function simSubset(chico, grande) {
       const sig = chico.filter((t) => t.length > 2);
       const distintos = sig.filter((t, i) => sig.indexOf(t) === i);
       if (distintos.length < 2) return false;
-      return distintos.every((t) => grande.indexOf(t) >= 0);
+      if (!distintos.every((t) => grande.indexOf(t) >= 0)) return false;
+      return distintos.some(esDistintivo);
     }
 
     // Todo lo que depende SOLO de la consulta se calcula una vez y se
