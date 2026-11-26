@@ -1137,6 +1137,7 @@
     let busquedaHecha = false;         // ¿ya se pulsó Buscar al menos una vez?
     let cargaPersonasPromesa = null;   // dedup de cargas simultáneas
     let cacheRegistrosFuente = {};     // lista_id -> registros ya parseados
+    let origenListas = { cache: 0, red: 0 }; // de dónde salió cada lista
 
     // Estado global de navegación (sin router; mostramos/ocultamos divs).
     let estadoApp = {
@@ -3519,6 +3520,143 @@
 
     // Devuelve los registros normalizados de una lista, desde su archivo
     // fuente. Cachea por lista_id. null si no se pudo obtener.
+    // =============================================================
+    // CACHÉ EN DISCO DE LAS LISTAS YA PARSEADAS (IndexedDB)
+    // =============================================================
+    // El costo de la búsqueda internacional no es compararla: es volver a
+    // bajar y parsear las 30 listas en cada sesión. MEDIDO sobre la OFAC SDN
+    // (19,629 registros, 2.4 MB comprimidos que se vuelven 29.6 MB de XML):
+    //
+    //   parsear de cero ....... 1,244 ms  (de los cuales 1,103 son el XML)
+    //   leerla ya parseada ....... 34 ms
+    //
+    // 36.9x. Y la OFAC es una de 30: extrapolando por tamaño, el parseo de
+    // todas ronda los 7 segundos por sesión. Eso es lo que esta caché quita.
+    //
+    // Se guarda lo YA parseado y normalizado (con _norms y _plains), no el
+    // archivo crudo: el archivo crudo ya lo cachea el navegador por HTTP, y
+    // lo que duele es el parseo. Son ~8 MB por la OFAC, unos 50 MB por las
+    // 30, dentro de lo que IndexedDB da sin problema.
+    //
+    // Todo aquí degrada en silencio: si IndexedDB no existe, está lleno, o
+    // el navegador lo bloquea (ventana privada, datos de sitio limpiados),
+    // se sigue por el camino normal de bajar y parsear.
+    const IDB_NOMBRE = "pep-manager";
+    const IDB_VERSION = 1;
+    const IDB_TIENDA = "listas";
+    // Sube si cambia la FORMA de los registros guardados; las entradas con
+    // otro formato se ignoran en vez de leerse mal.
+    const IDB_FORMATO = 1;
+    let idbPromesa = null;
+
+    function abrirIDB() {
+      if (idbPromesa) return idbPromesa;
+      idbPromesa = new Promise((resolve) => {
+        if (typeof indexedDB === "undefined") { resolve(null); return; }
+        let req;
+        try { req = indexedDB.open(IDB_NOMBRE, IDB_VERSION); }
+        catch (_) { resolve(null); return; }
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains(IDB_TIENDA)) db.createObjectStore(IDB_TIENDA);
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => resolve(null);
+        req.onblocked = () => resolve(null);
+      });
+      return idbPromesa;
+    }
+
+    function idbLeer(clave) {
+      return abrirIDB().then((db) => {
+        if (!db) return null;
+        return new Promise((resolve) => {
+          let tx;
+          try { tx = db.transaction(IDB_TIENDA, "readonly"); }
+          catch (_) { resolve(null); return; }
+          const req = tx.objectStore(IDB_TIENDA).get(clave);
+          req.onsuccess = () => resolve(req.result || null);
+          req.onerror = () => resolve(null);
+        });
+      }).catch(() => null);
+    }
+
+    function idbEscribir(clave, valor) {
+      return abrirIDB().then((db) => {
+        if (!db) return false;
+        return new Promise((resolve) => {
+          let tx;
+          try { tx = db.transaction(IDB_TIENDA, "readwrite"); }
+          catch (_) { resolve(false); return; }
+          tx.oncomplete = () => resolve(true);
+          // Cuota llena, por ejemplo. No debe romper la búsqueda.
+          tx.onerror = () => {
+            console.warn("No se pudo guardar " + clave + " en la caché local:", tx.error);
+            resolve(false);
+          };
+          tx.onabort = () => resolve(false);
+          try { tx.objectStore(IDB_TIENDA).put(valor, clave); }
+          catch (_) { resolve(false); }
+        });
+      }).catch(() => false);
+    }
+
+    // Borra la caché local de listas. No toca Excel ni los espejos: solo
+    // obliga a volver a bajarlas y parsearlas.
+    async function limpiarCacheListas() {
+      const db = await abrirIDB();
+      if (!db) return false;
+      return new Promise((resolve) => {
+        let tx;
+        try { tx = db.transaction(IDB_TIENDA, "readwrite"); }
+        catch (_) { resolve(false); return; }
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+        try { tx.objectStore(IDB_TIENDA).clear(); } catch (_) { resolve(false); }
+      });
+    }
+    window.limpiarCacheListas = limpiarCacheListas; // a mano desde la consola
+
+    // Huella del CÓDIGO que produjo los registros guardados.
+    //
+    // Hace falta porque el espejo puede no haber cambiado y el adaptador sí:
+    // justo pasó con el AfDB, que se cambió para leerse de la fuente oficial
+    // en vez de OpenSanctions. Sin esto, la caché seguiría sirviendo lo que
+    // parseó el adaptador viejo hasta que el archivo remoto cambiara, y en
+    // una lista de sanciones eso significa servir designaciones mal leídas
+    // sin que nadie se dé cuenta.
+    //
+    // Se usa el texto de la propia función, así que se invalida sola cuando
+    // alguien edita un adaptador: no hay que acordarse de subir una versión.
+    // Entra también simNorm, porque de ella dependen _norms y _plains.
+    function huellaFuncion(fn) {
+      const s = String(fn);
+      let h = 5381;
+      for (let i = 0; i < s.length; i++) h = (((h << 5) + h) ^ s.charCodeAt(i)) >>> 0;
+      return h.toString(36);
+    }
+
+    function huellaCodigo(adaptador) {
+      return huellaFuncion(adaptador) + "." + huellaFuncion(simNorm);
+    }
+
+    // Huella del archivo remoto, con HEAD: unos bytes, sin bajar el cuerpo.
+    // Si el espejo no cambió desde la última vez, su ETag es el mismo y lo
+    // guardado sigue sirviendo. Si el servidor no manda ninguna huella,
+    // devuelve null y entonces no se usa la caché (mejor lento que viejo).
+    async function huellaRemota(url) {
+      try {
+        const resp = await fetch(url, { method: "HEAD" });
+        if (!resp.ok) return null;
+        const etag = resp.headers.get("ETag");
+        if (etag) return "etag:" + etag;
+        const lm = resp.headers.get("Last-Modified");
+        return lm ? "lm:" + lm : null;
+      } catch (_) {
+        return null;
+      }
+    }
+
     async function obtenerRegistrosDeFuente(lista) {
       const clave = String(lista.lista_id || "").trim();
       if (cacheRegistrosFuente[clave]) return cacheRegistrosFuente[clave];
@@ -3526,6 +3664,33 @@
       const adaptador = obtenerAdaptador(lista);
       if (!adaptador) return null;
 
+      // Deja un conjunto de registros listo para usarse, venga de donde
+      // venga: lo suma al corpus IDF y lo deja en la caché de memoria.
+      const adoptar = (registros) => {
+        // El corpus IDF crece con cada lista: los tokens raros pesan más.
+        indexarIDF(registros.map((r) => (r._norms && r._norms[0]) || ""), "lista:" + clave);
+        cacheRegistrosFuente[clave] = registros;
+        return registros;
+      };
+
+      const codigo = huellaCodigo(adaptador);
+
+      // 1) ¿Ya quedó parseada de una sesión anterior, con ESTE código, y el
+      // espejo sigue igual?
+      const guardado = await idbLeer(clave);
+      if (guardado && guardado.formato === IDB_FORMATO && guardado.url &&
+          guardado.huella && guardado.codigo === codigo &&
+          Array.isArray(guardado.registros)) {
+        const huellaHoy = await huellaRemota(guardado.url);
+        if (huellaHoy && huellaHoy === guardado.huella) {
+          origenListas.cache++;
+          return adoptar(guardado.registros);
+        }
+      }
+
+      // 2) Camino normal: bajar, descomprimir, parsear, normalizar y dejarla
+      // guardada para la próxima sesión.
+      //
       // Mismo orden que "Actualizar ahora": espejo comprimido, espejo plano,
       // y por último la fuente original (que suele bloquear por CORS).
       const candidatos = mirrorUrlsDe(lista).concat(lista.url_fuente ? [lista.url_fuente] : []);
@@ -3533,6 +3698,15 @@
         try {
           const resp = await fetch(url);
           if (!resp.ok) continue;
+
+          // Huella para saber después si este archivo cambió. En una fuente
+          // de otro dominio estos encabezados no se pueden leer (CORS no los
+          // expone), así que esa lista simplemente no se cachea: vale más
+          // reparsearla que servir algo viejo sin saberlo.
+          const etag = resp.headers.get("ETag");
+          const lm = resp.headers.get("Last-Modified");
+          const huella = etag ? ("etag:" + etag) : (lm ? ("lm:" + lm) : null);
+
           const buf = await talvezGunzip(await resp.arrayBuffer());
           const registros = adaptador(decodificarBuffer(buf));
 
@@ -3550,11 +3724,22 @@
             // búsqueda con las 30 listas cargadas.
             r._plains = r._norms.map((n) => n.replace(/\s/g, ""));
           });
-          // El corpus IDF crece con cada lista: los tokens raros pesan más.
-          indexarIDF(registros.map((r) => (r._norms && r._norms[0]) || ""), "lista:" + clave);
 
-          cacheRegistrosFuente[clave] = registros;
-          return registros;
+          // Se guarda sin esperar: la búsqueda no tiene por qué detenerse a
+          // que el disco termine, y si falla no pasa nada (se reparsea).
+          if (huella) {
+            idbEscribir(clave, {
+              formato: IDB_FORMATO,
+              url: url,
+              huella: huella,
+              codigo: codigo,
+              fecha: Date.now(),
+              registros: registros,
+            });
+          }
+
+          origenListas.red++;
+          return adoptar(registros);
         } catch (err) {
           console.warn("No se pudo leer " + clave + " desde " + url + ":", err);
         }
@@ -3617,6 +3802,8 @@
       let listas = 0;
       const traidas = new Array(activas.length).fill(null);
       let siguiente = 0;
+      origenListas = { cache: 0, red: 0 };
+      const inicio = performance.now();
 
       const trabajador = async () => {
         for (;;) {
@@ -3628,7 +3815,8 @@
             console.warn("Error al leer " + activas[i].lista_id + ":", err);
           }
           listas++;
-          progreso.textContent = "Trayendo listas… " + listas + " de " + activas.length;
+          progreso.textContent = "Trayendo listas… " + listas + " de " + activas.length +
+            (origenListas.cache ? " (" + origenListas.cache + " ya guardadas)" : "");
         }
       };
       await Promise.all(
@@ -3659,8 +3847,11 @@
         if (total > 0) $("intTableWrap").classList.remove("hidden");
       }
 
+      const segs = ((performance.now() - inicio) / 1000).toFixed(1);
       progreso.textContent = total + " coincidencia(s) en " + activas.length + " lista(s)" +
-        (fallidas ? " · " + fallidas + " no se pudo(ieron) leer" : "");
+        (fallidas ? " · " + fallidas + " no se pudo(ieron) leer" : "") +
+        " · " + segs + " s (" + origenListas.cache + " de caché, " +
+        origenListas.red + " bajadas)";
       if (total === 0) {
         $("intVacio").textContent = "Sin coincidencias en las listas internacionales consultadas.";
         $("intVacio").classList.remove("hidden");
