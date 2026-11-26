@@ -271,6 +271,11 @@
 
         <!-- Mensaje de error (Graph) -->
         <div id="dataError" class="hidden p-4 m-5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm"></div>
+
+        <!-- Aviso de integridad: un persona_id usado por personas distintas.
+             No es un error de carga, así que va aparte y no lo apagan los
+             que limpian dataError. -->
+        <div id="avisoIds" class="hidden p-4 m-5 rounded-lg bg-amber-50 border border-amber-300 text-amber-900 text-sm"></div>
       </div>
 
       <!-- Pista inicial, antes de la primera búsqueda -->
@@ -1729,6 +1734,11 @@
         ultimaCarga = Date.now();
         actualizarTimestamp();
 
+        // Guarda de integridad: un persona_id que usan personas distintas
+        // hace que la foto y los datos del relacionado salgan en el registro
+        // equivocado. Ver idsCompartidos().
+        avisarIdsCompartidos(idsCompartidos(idx, filas));
+
         // Cargamos catálogos (cargos/dependencias) la primera vez,
         // reutilizando la misma sesión de Workbook.
         if (catCargos.length === 0 || catDeps.length === 0) {
@@ -1763,6 +1773,94 @@
     function normTexto(s) {
       const marks = new RegExp("[\\u0300-\\u036f]", "g");
       return String(s || "").normalize("NFD").replace(marks, "").toLowerCase().trim();
+    }
+
+    // ¿Hay algún persona_id usado por personas DISTINTAS?
+    //
+    // Que un id se repita no basta para alarmar: una misma persona puede
+    // tener varias filas, una por cargo, y eso es legítimo — hay cientos
+    // así. Lo que rompe cosas es que el mismo id lo usen nombres distintos,
+    // porque la foto se guarda como <persona_id>.jpg y buscarFilaPorId()
+    // devuelve la PRIMERA coincidencia: entonces la miniatura y el
+    // autollenado del relacionado le salen a la persona equivocada.
+    //
+    // Ya pasó: una carga de Chiapas reusó el rango PEP-8000..PEP-9999 y dejó
+    // 1,358 ids compartidos por personas distintas, con 12 fotos ya
+    // publicadas encima. Se corrigieron el 26-nov-2026 reasignando ids. Esta
+    // guarda existe para que la próxima carga masiva no lo repita en
+    // silencio, que fue lo que permitió que creciera tanto.
+    function idsCompartidos(idx, filas) {
+      const iId = idx["persona_id"];
+      const iNom = idx["nombre_completo"];
+      if (iId === undefined || iNom === undefined) return [];
+      const porId = new Map();
+      for (let k = 0; k < filas.length; k++) {
+        const v = filas[k].values[0];
+        const id = String(v[iId] || "").trim();
+        if (!id) continue;
+        let noms = porId.get(id);
+        if (!noms) { noms = new Set(); porId.set(id, noms); }
+        noms.add(normTexto(v[iNom]));
+      }
+      const malos = [];
+      porId.forEach((noms, id) => {
+        if (noms.size > 1) malos.push({ id: id, nombres: Array.from(noms) });
+      });
+      malos.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+      return malos;
+    }
+
+    // El aviso se queda puesto hasta que alguien lo cierre: un toast de tres
+    // segundos no sirve para algo que hay que ir a corregir.
+    function avisarIdsCompartidos(malos) {
+      const div = $("avisoIds");
+      if (!div) return;
+      div.textContent = "";
+      if (!malos.length) { div.classList.add("hidden"); return; }
+
+      const titulo = document.createElement("div");
+      titulo.className = "font-semibold";
+      titulo.textContent = malos.length === 1
+        ? "Hay 1 persona_id usado por personas distintas."
+        : "Hay " + malos.length.toLocaleString("es-MX") +
+          " persona_id usados por personas distintas.";
+      div.appendChild(titulo);
+
+      const expl = document.createElement("p");
+      expl.className = "mt-1";
+      expl.textContent = "La fotografía se guarda con el nombre del id y el nombre de la " +
+        "persona relacionada también se resuelve por id, así que a esos registros les puede " +
+        "aparecer la foto o los datos de alguien más. Conviene reasignar los ids antes de " +
+        "seguir capturando.";
+      div.appendChild(expl);
+
+      const ul = document.createElement("ul");
+      ul.className = "mt-2 list-disc pl-5 space-y-0.5";
+      malos.slice(0, 5).forEach((m) => {
+        const li = document.createElement("li");
+        li.textContent = m.id + " — " + m.nombres.join("  /  ");
+        ul.appendChild(li);
+      });
+      div.appendChild(ul);
+
+      if (malos.length > 5) {
+        const mas = document.createElement("p");
+        mas.className = "mt-1 text-xs";
+        mas.textContent = "… y " + (malos.length - 5).toLocaleString("es-MX") +
+          " más. La lista completa quedó en la consola del navegador.";
+        div.appendChild(mas);
+      }
+
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "mt-3 px-3 py-1.5 rounded-md border border-amber-400 bg-white " +
+        "text-xs font-medium hover:bg-amber-100";
+      btn.textContent = "Entendido, ocultar";
+      btn.addEventListener("click", () => div.classList.add("hidden"));
+      div.appendChild(btn);
+
+      div.classList.remove("hidden");
+      console.warn("persona_id usados por personas distintas:", malos);
     }
 
     // =============================================================
