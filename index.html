@@ -4986,8 +4986,19 @@
           const s = dateToExcelSerial(v);
           arr[i] = (s === null) ? "" : s;
         } else if (col === "cargo_id" || col === "dependencia_efectiva_id") {
-          // En Excel va "ID - nombre", no el ID pelon (ver conNombreCatalogo).
-          arr[i] = conNombreCatalogo(v);
+          // En Excel va "ID - nombre", no el ID pelÃ³n (ver conNombreCatalogo).
+          //
+          // Si al editar NO se cambiÃ³ de cargo o de dependencia y la fila ya
+          // traÃ­a un valor compuesto, se reenvÃ­a ESE texto tal cual. Hay filas
+          // cuyo texto es mÃ¡s especÃ­fico que el nombre del catÃ¡logo: "DEP-255 -
+          // Fiscalia General del Estado de Aguascalientes" contra el genÃ©rico
+          // "FiscalÃ­a/ProcuradurÃ­a General de Justicia Estatal (genÃ©rico)".
+          // Recomponerlas borrarÃ­a ese dato solo por editar cualquier otro
+          // campo de la persona. Si sÃ­ se cambiÃ³, se compone con el catÃ¡logo.
+          const previo = valoresOriginales ? String(valoresOriginales[col] ?? "") : "";
+          arr[i] = (previo && RE_ID_NOMBRE.test(previo.trim()) && idCatalogo(previo) === idCatalogo(v))
+            ? previo
+            : conNombreCatalogo(v);
         } else {
           arr[i] = (v === undefined || v === null) ? "" : v;
         }
