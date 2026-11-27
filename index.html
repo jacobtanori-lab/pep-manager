@@ -1164,6 +1164,46 @@
     let mapCargo = {}; // cargo_id -> objeto cargo
     let mapDep = {};   // dependencia_id -> objeto dependencia
 
+    // ---- cargo_id y dependencia_efectiva_id: "ID - nombre" en Excel, ID adentro ----
+    // Desde el 27-nov-2026 estas dos columnas de tbl_Personas guardan el
+    // identificador SEGUIDO del nombre del catálogo, p. ej.
+    // "CARGO-0001 - Presidente de la República", para que el Excel se pueda
+    // leer sin cruzarlo contra los catálogos. Dentro de la app la llave sigue
+    // siendo el identificador pelón: los <select>, mapCargo, mapDep, los
+    // filtros, DEP_AYUNTAMIENTO y esDepGenerica comparan contra él. Estas dos
+    // funciones son la frontera: idCatalogo() al LEER un valor de una fila y
+    // conNombreCatalogo() al ESCRIBIRLO.
+    //
+    // idCatalogo es conservadora A PROPÓSITO: solo recorta cuando el valor
+    // tiene exactamente la forma "ID - algo" Y ese ID existe en el catálogo.
+    // Todo lo demás se devuelve intacto, porque estas columnas también traen
+    // valores históricos que NO son un ID seguido de su nombre y que hay que
+    // conservar tal cual al editar: texto libre sin identificador
+    // ("Consejero Electoral INE", 26,900 filas de cargo y 4,627 de
+    // dependencia) y compuestos con espacio ("DEP-MUN Ayuntamiento de Zimapán
+    // - Hidalgo", 25,192 filas). Recortar esos a "DEP-MUN" haría que guardar
+    // una edición les borrara el texto.
+    const SEP_ID_NOMBRE = " - ";
+    const RE_ID_NOMBRE = /^((?:CARGO|DEP)-[A-Za-z0-9]+) - /;
+    function idCatalogo(valor) {
+      const s = String(valor === null || valor === undefined ? "" : valor).trim();
+      const m = RE_ID_NOMBRE.exec(s);
+      if (!m) return s;
+      return (mapCargo[m[1]] || mapDep[m[1]]) ? m[1] : s;
+    }
+    // Lo que se guarda en Excel: "ID - nombre" si el valor es un ID del
+    // catálogo; cualquier otra cosa (texto libre, compuestos históricos) se
+    // devuelve sin tocar. Es idempotente: pasarle un valor ya compuesto lo
+    // recompone con el nombre vigente del catálogo.
+    function conNombreCatalogo(valor) {
+      const original = String(valor === null || valor === undefined ? "" : valor);
+      const id = idCatalogo(original);
+      const cat = mapCargo[id] || mapDep[id];
+      if (!cat) return original;
+      const nombre = String(cat.cargo || cat.nombre || "").trim();
+      return nombre ? id + SEP_ID_NOMBRE + nombre : id;
+    }
+
     // -------------------------------------------------------------
     // Arranque: MSAL v3 requiere initialize() antes de usarse.
     // Detectamos si ya hay una cuenta en caché para auto-login.
@@ -2655,7 +2695,7 @@
         const v = valores[i];
         return String(v === null || v === undefined ? "" : v).trim();
       };
-      const cat = mapCargo[dato("cargo_id")];
+      const cat = mapCargo[idCatalogo(dato("cargo_id"))];
       return {
         id: dato("persona_id"),
         nombre: dato("nombre_completo"),
@@ -3088,7 +3128,7 @@
         sinFoto++;
         const empate = buscarEmpate(indice, dato("nombre_completo"));
         if (!empate) return;
-        const cat = mapCargo[dato("cargo_id")];
+        const cat = mapCargo[idCatalogo(dato("cargo_id"))];
         hallazgosBulk.push(evaluarHallazgoBulk(empate, {
           id: pid,
           nombre: dato("nombre_completo"),
@@ -3492,8 +3532,8 @@
         if (fEstatus && val(v, "estatus") !== fEstatus) return false;
         if (fTipo && val(v, "tipo_pep") !== fTipo) return false;
         if (fEntidad && val(v, "entidad_federativa") !== fEntidad) return false;
-        if (fCargo && val(v, "cargo_id") !== fCargo) return false;
-        if (fDep && val(v, "dependencia_efectiva_id") !== fDep) return false;
+        if (fCargo && idCatalogo(val(v, "cargo_id")) !== fCargo) return false;
+        if (fDep && idCatalogo(val(v, "dependencia_efectiva_id")) !== fDep) return false;
         return true;
       });
 
@@ -3570,7 +3610,7 @@
             // Mostramos el nombre legible del catálogo (con el id en tooltip),
             // que es lo útil al leer resultados.
             td.className = claseCelda;
-            const cat = (nombreCol === "cargo_id") ? mapCargo[valor] : mapDep[valor];
+            const cat = (nombreCol === "cargo_id") ? mapCargo[idCatalogo(valor)] : mapDep[idCatalogo(valor)];
             const legible = cat ? (cat.cargo || cat.nombre) : null;
             td.textContent = legible || (valor != null ? valor : "—");
             if (valor != null) td.title = String(valor);
@@ -4481,12 +4521,12 @@
       $("f_rfc").value = p.rfc || "";
 
       // Cargo + dependencia (preseleccionando la dependencia guardada).
-      $("f_cargo_id").value = p.cargo_id || "";
-      onCargoChange(p.dependencia_efectiva_id ? String(p.dependencia_efectiva_id) : null);
+      $("f_cargo_id").value = idCatalogo(p.cargo_id);
+      onCargoChange(p.dependencia_efectiva_id ? idCatalogo(p.dependencia_efectiva_id) : null);
 
       // Entidad / municipio según la dependencia.
       poblarEntidades(p.entidad_federativa || "");
-      actualizarVisibilidadEntidadMunicipio(String(p.dependencia_efectiva_id || ""));
+      actualizarVisibilidadEntidadMunicipio(idCatalogo(p.dependencia_efectiva_id));
       $("f_municipio").value = p.municipio || "";
 
       $("f_fecha_inicio_cargo").value = excelSerialToInputDate(p.fecha_inicio_cargo);
@@ -4612,9 +4652,9 @@
         if (i === undefined || v[i] === null || v[i] === undefined) return "";
         return v[i];
       };
-      const dep = String(leer("dependencia_efectiva_id") || "");
+      const dep = idCatalogo(leer("dependencia_efectiva_id"));
 
-      $("f_cargo_id").value = leer("cargo_id");
+      $("f_cargo_id").value = idCatalogo(leer("cargo_id"));
       onCargoChange(dep || null);
       poblarEntidades(leer("entidad_federativa") || "");
       actualizarVisibilidadEntidadMunicipio(dep);
@@ -4945,6 +4985,9 @@
         if (COLS_FECHA_ALL.includes(col)) {
           const s = dateToExcelSerial(v);
           arr[i] = (s === null) ? "" : s;
+        } else if (col === "cargo_id" || col === "dependencia_efectiva_id") {
+          // En Excel va "ID - nombre", no el ID pelon (ver conNombreCatalogo).
+          arr[i] = conNombreCatalogo(v);
         } else {
           arr[i] = (v === undefined || v === null) ? "" : v;
         }
